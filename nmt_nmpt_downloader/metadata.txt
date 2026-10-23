@@ -1,0 +1,12 @@
+[general]
+name=NMT i NMTP ściągacz
+qgisMinimumVersion=3.28
+qgisMaximumVersion=3.99
+version=1.1.0
+author=Projekt lokalny
+description=Pobiera NMT i NMPT dla bufora warstwy. Zadania w tle, statystyki, wznowienie i raporty luk.
+about=Pobieranie numerycznych danych WCS GUGiK, EPSG:2180, skompresowane GeoTIFF Float32. Oddzielne foldery NMT/NMPT, raporty JSON/Markdown/GeoJSON.
+category=Raster
+icon=icon.svg
+experimental=True
+hasProcessingProvider=False
