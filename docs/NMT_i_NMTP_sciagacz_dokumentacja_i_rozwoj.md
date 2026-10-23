@@ -19,7 +19,9 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 8. Suplement A: konkretne zastosowania biznesowe.
 9. Suplement B: dodatkowe, mniej oczywiste dane.
 10. Suplement C: przykłady Pythona i plan wdrożenia.
-11. Granice obecnej wersji i bibliografia.
+11. Suplement D: plan rozwoju produktu i granice obecnej wersji.
+12. Suplement E: plan widoczności turbin — NMT, lokalne NMPT i 3D.
+13. Bibliografia.
 
 ## 1. Czy ostatnie pobieranie poszło poprawnie?
 
@@ -1021,6 +1023,522 @@ Wycenę można oprzeć na przygotowaniu projektu i cyklicznej aktualizacji albo 
 - Brak rozbudowanego limitu wolnego miejsca przed startem i pełnego manifestu licencji/epok.
 - QGIS 4 oraz pełna macierz Windows/macOS nie zostały tutaj zweryfikowane.
 - Przykłady ładujące całe tablice są przeznaczone do małych wycinków; analizy produkcyjne muszą działać blokowo.
+
+
+# Suplement E. Plan implementacji widoczności turbin — od NMT do lokalnego 3D
+
+**Status:** plan nowego modułu, nie funkcja ZIP-a 1.1.0. Dokumentację rozbudowano 23 października 2026 r. bez zmiany kodu wtyczki ani jej numeru wersji.
+
+## E1. Cel i rekomendowany model pracy
+
+Użytkownik wybiera warstwę turbin oraz zasięg analizy. Lekki wariant odpowiada, gdzie ukształtowanie terenu dopuszcza widoczność. Wariant dokładniejszy uwzględnia budynki i roślinność tylko tam, gdzie pobrano szczegółowe dane. Kolejny etap pokazuje scenę 3D, a dopiero najbardziej rozbudowany sprawdza promienie wobec geometrii 3D i próbek wirnika.
+
+**Rekomendacja:** NMT dla dużego obszaru, wysokiej rozdzielczości NMPT dla wskazanych otoczeń oraz wyraźne oznaczenie niezbadanego przesłaniania. To sensowny kompromis transferu, pamięci i wiarygodności. Nie trzeba pobierać NMPT 0,5 m dla całego koła o promieniu 20 km, żeby zacząć użyteczną analizę.
+
+Są dwa różne produkty:
+
+1. **Mapa potencjalnej widoczności** dla całego otoczenia turbin.
+2. **Ocena wskazanych odbiorców** — konkretnych zabudowań, działek lub punktów obserwacyjnych.
+
+Drugi produkt bywa znacznie tańszy obliczeniowo. Jeżeli klient pyta tylko o kilkadziesiąt zabudowań, nie trzeba obliczać dokładnej widoczności dla każdego piksela całej okolicy.
+
+### Ważne: skąd patrzymy, a na co patrzymy?
+
+- Turbina jest **obiektem oglądanym**.
+- Punkt przy zabudowaniu, na działce albo przy drodze jest **obserwatorem**.
+- Budynek, drzewo i teren między nimi są **przeszkodami**.
+
+Jedna warstwa budynków może dostarczyć lokalizacji odbiorców i osobno geometrii przeszkód, ale te role muszą być jawnie rozdzielone. Działka sama w sobie nie ma wysokości i nie jest bryłą zasłaniającą widok.
+
+## E2. Projekt formularza wtyczki
+
+Nowa zakładka **„Widoczność turbin”**, korzystająca z istniejących folderów NMT/NMPT i ich indeksów. Dotychczasowa zakładka pobierania pozostaje użyteczna także bez analiz.
+
+### E2.1. Obiekty i duży zasięg
+
+| Pole | Proponowane zachowanie |
+|---|---|
+| Warstwa turbin | Warstwa punktowa z projektu lub wczytana z pliku |
+| Tylko zaznaczone turbiny | Jak w obecnym wyborze obiektów |
+| Identyfikator turbiny | Wskazanie pola; bez stabilnego ID wyniki trudno porównywać |
+| Wysokość piasty AGL | Pole atrybutowe lub wartość wspólna; jednostka metr |
+| Średnica wirnika | Pole lub wartość wspólna; górna końcówka = piasta + połowa średnicy |
+| Zasięg analizy od turbin | Domyślnie 20 000 m, z możliwością wpisania własnej wartości |
+| Wysokość oka nad gruntem | Domyślnie 1,7 m, osobna opcja/pole dla innych obserwatorów |
+| Analizowane punkty turbiny | Piasta, górna końcówka, dolna krawędź wirnika; na początku osobne wyniki |
+| Wynik | Mapa otoczenia albo tylko wskazani odbiorcy |
+
+Zasięg 20 km jest granicą wykonania zadania, nie deklaracją, że poza nim turbina jest fizycznie niewidoczna. Poza zasięgiem wynik ma stan `outside_analysis`, a nie „niewidoczna”. Walidacja przed startem pokazuje skalę zadania dla dowolnie wpisanej odległości.
+
+### E2.2. Lokalna analiza NMPT
+
+Checkbox **„Uwzględnij szczegółowe NMPT lokalnie”**, domyślnie wyłączony dla szybkiej analizy terenowej.
+
+Po włączeniu:
+
+- **Promień szczegółowego otoczenia:** domyślnie 1000 m.
+- Presety **650 / 1000 / 1500 m** i pole do wpisania własnego promienia.
+- **Wokół czego:** turbin / odbiorców / obu zbiorów / wskazanej warstwy zabudowań lub działek.
+- Rozdzielczość NMPT: najlepsza dostępna zgodna z przyjętym układem, z pokazaniem faktycznej wartości.
+- **„Użyj już posiadanych kafli również poza planowanym otoczeniem”** — można poszerzyć faktycznie sprawdzony odcinek bez nowego transferu.
+- Tryb pobierania: tylko lokalne dane / dociągnij braki / dociągnij także niezbędne korytarze promieni.
+- Limit transferu i miejsce na dysku: preflight z ostrzeżeniem o skali, a nie bezwarunkowe pobranie całego regionu.
+
+W tym planie zakres 650–1500 m oznacza proponowane **wartości promienia**, nie pierścień z pominiętym środkiem. Wartość 1000 m jest decyzją projektową do pierwszego prototypu, nie wymaganiem algorytmu.
+
+**Preferowany wariant dla oceny domów:** szczegółowe otoczenia odbiorców oraz opcjonalnie turbin. Sama dokładność przy turbinie nie wystarczy do oceny przeszkód przy domu.
+
+### E2.3. Własne warstwy zabudowy i działek
+
+Dwa niezależne selektory:
+
+1. **Warstwa odbiorców / obszarów oceny.** Punkty, budynki lub działki, dla których użytkownik chce wynik.
+2. **Warstwa dodatkowych przeszkód.** Budynki lub obiekty o znanej wysokości, ewentualnie prawdziwe bryły 3D.
+
+Dla przeszkód użytkownik musi wskazać znaczenie wysokości: AGL, wysokość dachu w przyjętym układzie lub geometria z bezwzględnym Z. Bez wysokości obrysy budynków mogą wyznaczać obszar pobrania NMPT; nie wolno automatycznie tworzyć z nich „prawdziwych” brył o wymyślonych 3 m. Działki służą do wyboru obszaru lub rozmieszczenia odbiorców, nie do przesłaniania.
+
+Dla odbiorców:
+
+- punkt: podana wysokość oka / kondygnacja / bezwzględne Z;
+- budynek: próbki na odpowiednich elewacjach i ewentualnie wysokościach, z jawnym odstępem od ściany;
+- działka: ustalona siatka albo punkty użytkownika; centroid to tylko jeden wariant, nie wynik dla całej działki;
+- obiekty poza zasięgiem analizy: osobna liczba i możliwość zmiany zasięgu, bez cichego pomijania.
+
+Próbkowanie działki co np. 10–25 m jest ustawieniem zadania. „30% punktów widocznych” nie oznacza automatycznie „30% powierzchni widocznej” ani „30% mieszkańców zobaczy turbinę”. Raport musi wskazać sposób doboru próbek.
+
+## E3. Cztery poziomy funkcjonalne
+
+| Poziom | Co otrzymuje użytkownik | Silnik | Względny rozmiar prac |
+|---|---|---|---|
+| 1. Widoczność terenowa NMT | Mapa i wyniki dla wysokości piasty/końcówki; liczba potencjalnie widocznych turbin | GDAL Viewshed; opcjonalnie GRASS `r.viewshed` | Najmniejszy etap, ale więcej niż dodanie jednego przycisku |
+| 2. NMT + lokalne NMPT | Sprawdzenie zasłaniania przy odbiorcach/turbinach i jawna informacja o brakującym modelu przeszkód | Własny koordynator LOS, odczyt okien GDAL, cache i maski pokrycia | Istotny nowy moduł analityczny |
+| 3. Lokalna scena 3D | Teren, otoczenie NMPT, modele turbin, punkty widzenia, przekroje | Najpierw natywne QGIS 3D; ewentualnie eksporter WWW | Średni/duży etap zależnie od jakości prezentacji i kompatybilności |
+| 4. Dokładniejsza widoczność brył 3D | Promienie do wielu punktów wirnika, przesłanianie bryłami, wyniki dla pozycji obserwatorów | Mesh + indeks przyspieszający; Open3D / trimesh / Embree | Największy etap, wymagający także dobrych danych |
+
+Scena, którą można obracać myszką, to **wizualizacja 3D**. Nie daje automatycznie poprawnej **analizy przesłaniania 3D**. Te funkcje powinny mieć oddzielne etapy i kryteria odbioru.
+
+## E4. Etap przygotowawczy: geometria, pion i jakość
+
+Zanim powstanie pierwszy wynik widoczności:
+
+1. Utworzyć snapshot źródła turbin i wybranych odbiorców.
+2. Sprawdzić CRS, jednostki wysokości i sens atrybutów.
+3. Odczytać poziom terenu pod każdą turbiną i obserwatorem z NMT albo potwierdzonego pomiaru.
+4. Wyznaczyć obszar zadania i plan potrzebnych kafli.
+5. Rozdzielić plan NMT i plan lokalnego NMPT.
+6. Sprawdzić układ wysokościowy oraz daty, jeśli są dostępne.
+7. Wskazać braki i niezgodności przed kosztownymi obliczeniami.
+
+Dla analiz wysokościowych zalecany jest jeden układ, domyślnie EVRF2007. Opcja downloadera dopuszczająca KRON86 nie oznacza zgody na mieszanie układów w jednej analizie. Moduł analityczny powinien odrzucić niezgodność albo jawnie wykonać wcześniej zweryfikowaną transformację pionową z odpowiednimi modelami — nie samą zmianę etykiety.
+
+NMT i NMPT mają inne piksele i mogą pochodzić z różnych dat. Silnie ujemne nDSM powinno uruchomić kontrolę jakości, a nie stać się „ujemną przeszkodą”. Jeśli dalszy etap wymaga założenia `NMPT >= NMT`, najpierw trzeba potwierdzić jego sens w danym zbiorze i opisać ewentualną korektę. Bez tego monotoniczny filtr terenu może dać błędne rozstrzygnięcie.
+
+## E5. Etap 1: podstawowa widoczność na NMT
+
+### E5.1. Silnik i użycie wysokości
+
+Pierwszy wybór: istniejący `gdal.ViewshedGenerate`, z opakowaniem w `QgsTask`. GDAL jest już częścią środowiska. GRASS `r.viewshed` jest alternatywą do porównań i większych zadań; może działać w pamięci i w trybie dyskowym przy zadanym budżecie RAM, ale jego dostępność trzeba sprawdzić w instalacji QGIS.
+
+Z punktu turbiny wykonujemy osobno widoczność dla określonego poziomu, np. wysokości piasty i górnej końcówki, a po stronie komórek NMT ustawiamy wysokość oka 1,7 m. W sensie geometrycznym ta sama linia między końcami odpowiada patrzeniu z domu na ten punkt turbiny, o ile w obu kierunkach są zgodne wysokości, model powierzchni i korekty.
+
+Nie uruchamiamy automatycznie trzech dowolnie różnych backendów i nie zakładamy, że ich domyślne parametry oznaczają to samo. GDAL i GRASS mają różne domyślne ustawienia wysokości oraz krzywizny.
+
+### E5.2. Wyniki podstawowe
+
+- Oddzielny wynik na turbinę i wskazany poziom wysokości.
+- Mapa „co najmniej jedna potencjalnie widoczna turbina”.
+- Liczba potencjalnie widocznych turbin; typ całkowity dobrać do liczby obiektów, nie zawsze Byte.
+- Osobna maska obszaru przebadanego, nieprzebadanego i obszaru poza zasięgiem.
+- Statystyka per turbina i per obiekt odbiorcy.
+- Minimalny zapas nad profilem dla wybranych promieni jako diagnostyka granicznych przypadków.
+
+To wynik **terenowy**: nie obejmuje roślinności i budynków, jeśli nie ma ich w modelu. Nie powinien być nazwany „rzeczywista widoczność z każdego domu”.
+
+### E5.3. Rozdzielczość i NoData
+
+Możliwe są dwa tryby obliczeń:
+
+- szybki screening, np. siatka obliczeniowa 5 m z istniejącego NMT;
+- dokładniejsza analiza na źródłowej siatce, np. 1 m, dla odpowiedniego zakresu.
+
+Piksel obliczeniowy nie jest nowym pomiarem. Uśrednienie NMT do 5 m może usunąć wąską krawędź terenu; wynik szybki nie może bez dodatkowej kontroli służyć do bezpiecznego odrzucenia wszystkich przypadków brzegowych. Wymagające dokładności granice widoczności trzeba przeliczyć dokładniej albo stosować wiarygodne dolne/górne granice wysokości bloków.
+
+**Istotna uwaga z dokumentacji GDAL:** `gdal_viewshed` nie traktuje specjalnie wejściowych komórek NoData. Samo ustawienie NoData wyniku nie naprawia wejścia. Dlatego przygotowanie danych musi wykrywać luki. Dla podstawowego backendu nie wolno interpretować wyniku przez nieznaną dziurę jak przez równy teren. Zadanie może kontynuować analizę innych turbin, ale wynik zależny od nieznanych danych musi być pominięty lub oznaczony jako nieustalony. To wymaga dodatkowej logiki, nie tylko wywołania GDAL.
+
+## E6. Etap 2: model hybrydowy NMT + lokalne NMPT
+
+### E6.1. Jak planować dane
+
+Dla pełnej mapy:
+
+```text
+AOI_analizy = suma buforów R wokół wybranych turbin
+AOI_NMT = AOI_analizy + margines wymagany przez obliczenia
+AOI_NMPT = bufor(r_detail, wybrane centra) przecięty z obszarem potrzebnych analiz
+```
+
+Centra szczegółu mogą pochodzić z turbin, receptorów, budynków albo działek. Odbiorcy leżący poza R mają osobny stan. Nakładające się bufory szczegółowe są scalane do planu i nie powodują wielokrotnego pobierania.
+
+Dla zadania obejmującego tylko konkretne obiekty:
+
+```text
+pary = turbina–odbiorca spełniające warunek odległości <= R
+AOI_NMT = suma korytarzy tych par z wymaganym marginesem
+AOI_NMPT = lokalne otoczenia + opcjonalne korytarze szczegółowe
+```
+
+Tryb korytarzowy ogranicza dane i odczyty, ale nie jest wejściem do pełnej rastrowej mapy viewshed. Jest wejściem do analizy konkretnych promieni LOS. Szerokość korytarza musi pokryć footprint próbkowania, sąsiedztwo interpolacji, niedokładność georeferencji i wybrany model przeszkód. Nie można jej utożsamiać z zerowej szerokości linią.
+
+### E6.2. Dlaczego warto mieć NMPT blisko odbiorcy
+
+Przykład z płaskim terenem: oko na wysokości 1,7 m, oglądany punkt turbiny na wysokości 250 m, odległość 20 km. Po 100 m od obserwatora prosta patrzenia ma wysokość około 2,94 m nad terenem. Drzewo 10 m w tym miejscu może ją zasłonić. Bardzo dokładny model samych 1000 m wokół odległej turbiny tego nie wykryje.
+
+Ten przykład sprawdzono numerycznie: dodanie szczegółu przy obserwatorze wykryło przeszkodę, której nie było w samym szczególe przy turbinie. Nie jest to dowód, że wszystkie przeszkody leżą blisko obserwatorów — budynek lub las w środku trasy także może blokować widok.
+
+### E6.3. Właściwy algorytm hybrydowy
+
+1. Obliczyć wynik terenowy albo bezpośrednio sprawdzić profil NMT dla par turbina–odbiorca.
+2. Jeśli znana geometria terenu jednoznacznie blokuje linię, nie wykonywać niepotrzebnych szczegółowych sprawdzeń tej pary — pod warunkiem zgodnych modeli i poprawnego filtrowania.
+3. Dla pozostałych par wyznaczyć przebieg linii i wysokości obu końców względem NMT.
+4. Odczytać tylko okna danych przecinane przez promień, korzystając z indeksów kafli i cache.
+5. Tam, gdzie jest sprawdzony model przeszkód, porównać go z wysokością promienia.
+6. Zachować odcinki z brakiem NMPT jako niezamodelowane przeszkody, nawet gdy NMT jest kompletne.
+7. Zwrócić wynik z informacją o pokryciu i metodzie, nie tylko `True/False`.
+
+Nie wystarczy zrobić jednej mozaiki „NMT daleko, NMPT blisko” i wszędzie dodać do niej 1,7 m. Oko znalazłoby się wtedy np. 1,7 m nad koroną drzewa lub dachem zamiast nad rzeczywistym miejscem obserwacji. Podobnie wysokość piasty musi być liczona od gruntu, nie od lokalnego szczytu NMPT.
+
+### E6.4. Klasy wyników
+
+| Klasa | Co oznacza |
+|---|---|
+| `blocked_terrain` | Znany, poprawny model terenu blokuje linię |
+| `blocked_detail` | Zidentyfikowana przeszkoda w użytym szczególe blokuje linię |
+| `visible_modeled` | Nie wykryto przeszkody na całej trasie objętej przyjętym modelem |
+| `potential_visible_partial_detail` | Teren nie blokuje, sprawdzony lokalny szczegół też nie; inne fragmenty przesłaniania nie są zbadane |
+| `unknown_required_data` | Brakuje danych obowiązkowych lub wystąpiła niezgodność układu/jakości |
+| `uncertain_geometry` | Zapas jest bliski ustalonej tolerancji lub położenie obserwatora jest niejednoznaczne |
+| `outside_analysis` | Para albo obszar poza przyjętym zasięgiem |
+
+Nie stosować zielonego „na pewno widoczna” dla trasy z nieznanym modelem przeszkód. Proponowana legenda: zielony = widoczność w kompletnym modelu, żółty = potencjalna przy częściowym szczególe, szary = brak wymaganych danych, osobne kolory dla blokady terenowej i szczegółowej.
+
+Dla każdej pary przechowywać długość przeanalizowanej trasy, długość pokrytą NMPT i brakujące odcinki. **Pokrycie 90% długości nie oznacza 90% pewności widoczności** — przeszkoda na jednym brakującym odcinku może zdecydować o całym wyniku. Z kolei istniejąca, poprawnie ustalona przeszkoda może rozstrzygnąć blokadę mimo braku szczegółu dalej.
+
+`visible_modeled` nadal jest wynikiem geometrii i założeń modelu: nie uwzględnia automatycznie mgły, kontrastu, pory dnia ani zdolności człowieka do rozpoznania obiektu.
+
+## E7. Wysokości, krzywizna, refrakcja i próbkowanie
+
+### E7.1. Wysokości końców
+
+```text
+Z_oka = NMT(x_odbiorcy, y_odbiorcy) + wysokość_oka_AGL
+Z_piasty = NMT(x_turbiny, y_turbiny) + wysokość_piasty_AGL
+Z_górnego_punktu = Z_piasty + średnica_wirnika / 2
+Z_dolnego_punktu = Z_piasty - średnica_wirnika / 2
+```
+
+Jeżeli użytkownik ma geodezyjnie określone bezwzględne wysokości, mogą one mieć pierwszeństwo po kontroli pionu. Domyślne AGL i wysokości bezwzględne muszą być rozróżnione w formularzu. Użycie NMT o wysokiej rozdzielczości nie usuwa błędów wysokości wejściowych turbin.
+
+### E7.2. Wspólna korekta długich promieni
+
+Na dystansie kilkunastu–kilkudziesięciu kilometrów nie należy pomijać krzywizny. GDAL i GRASS nie mają identycznych domyślnych ustawień; parametry muszą być ustawione jawnie.
+
+Propozycja pierwszego ustawienia optycznego: współczynnik refrakcji `k = 1/7`, odpowiadający współczynnikowi krzywizny GDAL `cc = 1 - k = 6/7`. Użytkownik może wybrać scenariusz bez refrakcji lub inną przyjętą wartość; raport zapisuje założenie. To standardowy scenariusz obliczeniowy, nie pomiar atmosfery konkretnego dnia.
+
+Dla własnego profilu LOS w lokalnym przybliżeniu:
+
+```text
+R_eff = R_Ziemi / (1 - k)
+Z_linii(s) = Z_oka + (Z_celu - Z_oka) * s / L
+poprawka_krzywizny(s) = s * (L - s) / (2 * R_eff)
+porównujemy: Z_przeszkody(s) + poprawka_krzywizny(s) z Z_linii(s)
+```
+
+Parametry muszą odpowiadać temu samemu modelowi w backendzie rastrowym i profilowym. Wcześniejszy prosty przykład C2 używał ilustracyjnego `cc=0.87`; docelowy moduł powinien przenieść tę wartość do jawnej konfiguracji i testować zgodność wybranej konwencji, zamiast mieszać współczynniki.
+
+### E7.3. Promień nie może przeskakiwać przez drzewo
+
+Próbkowanie co 10 m nie nadaje się do bezpiecznej analizy wąskich przeszkód z NMPT 0,5 m. Zalecane jest przechodzenie przez przecinane komórki siatki, np. DDA/supercover, z kontrolą interpolacji lub wiarygodną obwiednią wysokości. Samo zmniejszenie kroku próbek nie daje matematycznej gwarancji wykrycia dowolnej geometrii między próbkami.
+
+Dla wydajności warto budować hierarchię min/max wysokości. Jeśli cały blok leży wyraźnie poniżej promienia, można go pominąć. Jeśli rozstrzygnięcie jest niepewne, schodzi się do drobniejszej siatki. Granice muszą uwzględniać zmianę wysokości promienia wewnątrz bloku, poprawkę krzywizny, NoData i tolerancję.
+
+Uśrednione overview służy do szybkiego wyświetlania, ale nie jest bezpiecznym zamiennikiem maksymalnych przeszkód. Z kolei wyłączne użycie maksimum bloku może zbyt często zasłaniać widok — jest to konserwatywny screening, nie tożsamy model.
+
+## E8. Etap 3: scena lokalna 3D
+
+Pierwszy wariant powinien wykorzystać QGIS 3D, jeśli dana instalacja go udostępnia. Użytkownik nie powinien musieć instalować osobnego środowiska VTK tylko po to, aby zobaczyć podstawową scenę.
+
+Scena zawiera:
+
+- teren NMT na większym obszarze, z poziomami szczegółowości;
+- lokalne wysokorozdzielcze płaty NMPT albo budynki o znanej wysokości;
+- turbiny o wymiarach z atrybutów;
+- miejsca obserwacji i wybrane promienie;
+- oznaczenie granic dokładnych danych;
+- kamerę „z punktu obserwatora”, a opcjonalnie eksport do przeglądarki.
+
+NMPT jest modelem **2,5D**: jedna wysokość na x/y. Nie opisuje prześwitów pod wiaduktem, otworów w budynku ani przejrzystości korony. Traktowanie całej przestrzeni pod koroną jak bryły nieprzezroczystej jest założeniem, które może zawyżyć blokowanie. Wyższa rozdzielczość sama tego nie naprawi.
+
+Dla rastrów ograniczyć liczbę trójkątów, stosować lokalne płaty i oddzielne LOD do prezentacji. Uproszczona siatka wyświetlana na ekranie nie powinna po cichu zastępować dokładniejszego modelu analitycznego.
+
+[Qgis2threejs](https://github.com/minorua/Qgis2threejs) jest przykładem istniejącego podejścia do eksportu scen QGIS do WebGL, nie automatycznym silnikiem weryfikacji widoczności. Przed integracją trzeba sprawdzić API, licencję i kompatybilność wersji. Alternatywą w osobnym narzędziu analitycznym jest PyVista; dla większej aplikacji WWW — Cesium/3D Tiles.
+
+## E9. Etap 4: geometria 3D i wirnik
+
+### E9.1. Co analizować w turbinie
+
+Widoczność górnego punktu nie jest równoważna widoczności całej turbiny. Trzy punkty na osi nie określają procentu widocznej tarczy wirnika. Na początku wynik powinien mówić dokładnie: „widoczna piasta”, „widoczny górny punkt” albo „widoczny dolny punkt”.
+
+W pełniejszym wariancie:
+
+1. Utworzyć geometrię wieży, gondoli i tarczy/próbek wirnika.
+2. Określić orientację wirnika albo zbiór scenariuszy kierunku; bez tego nie ma jednego stałego rzutu rotora.
+3. Wyznaczyć promienie od obserwatorów do próbek.
+4. Sprawdzić pierwszą przeszkodę na skończonym odcinku, nie na nieskończonej półprostej.
+5. Raportować udział widocznych próbek i wybraną metodę ważenia, nie bez uzasadnienia „procent wizualnego oddziaływania”.
+
+Orientacyjne próbkowanie tarczy trzeba sprawdzić pod kątem zbieżności — większa liczba próbek może ujawnić wąskie prześwity. Do pozornej powierzchni widocznej potrzebne jest ważenie zgodne z projekcją widoku, nie zwykła liczba nierównomiernie rozmieszczonych punktów.
+
+### E9.2. Backend przecięć
+
+- [Open3D `RaycastingScene`](https://github.com/isl-org/Open3D) — grupowe promienie i przyspieszona scena trójkątów.
+- [trimesh](https://github.com/mikedh/trimesh) — geometria i raycasting, z opcjonalnymi szybszymi backendami; sprawdzić dostępne zależności binarne.
+- Osobny worker jest rozsądną opcją, jeżeli zależności 3D kolidują z Pythonem/Qt dostarczanym przez QGIS.
+
+W Open3D parametr `t_hit` zależy od długości wektora kierunku. Trzeba go prawidłowo porównać z długością odcinka: albo normalizujemy kierunek, a parametr ma wymiar odległości, albo używamy wektora `cel - start` i porównujemy do zakresu parametru do 1. Trafienie za turbiną nie może oznaczać zasłonięcia turbiny.
+
+Konieczne są tolerancje przy początku i końcu promienia, obsługa punktu wewnątrz przeszkody i uniknięcie przypadkowego zasłaniania przez własną geometrię modelu celu. Nie wolno „naprawiać” tego przez usunięcie całego domu obserwatora z analizy — dom może prawidłowo zasłaniać widok z drugiej elewacji.
+
+### E9.3. Geometria globalna i lokalna
+
+Dla stabilności numerycznej scenę warto przesunąć do lokalnego początku przed obliczeniami Float32. Wszystkie promienie, obiekty i płaty muszą używać tego samego przekształcenia.
+
+Przy 20 km płaska scena 3D nie uwzględnia sama krzywizny Ziemi. Należy wybrać i przetestować zgodny model: lokalny z odpowiednią korektą albo odpowiednio zbudowaną geometrię globalną. Samo przejście do ECEF wymaga poprawnej interpretacji wysokości elipsoidalnych i nie załatwia automatycznie refrakcji. Nie należy mylić ortometrycznych wysokości modelu z elipsoidalnymi WGS84.
+
+## E10. Jak nie przeciążyć pobierania i pamięci
+
+### E10.1. Wielkości orientacyjne
+
+Dla jednego koła i jednego kanału, bez kafli brzegowych, dodatkowych buforów, kopii roboczych i narzutu formatu:
+
+| Zbiór / produkt | Promień | Piksel | Orientacyjna ilość wartości / pamięć |
+|---|---:|---:|---|
+| Numeryczne NMPT Float32 dla całego otoczenia | 20 km | 0,5 m | ok. 5,03 mld pikseli i 20,1 GB samych wartości |
+| Lokalne NMPT Float32 | 650 m | 0,5 m | ok. 5,31 mln pikseli i 21,2 MB |
+| Lokalne NMPT Float32 | 1000 m | 0,5 m | ok. 12,57 mln pikseli i 50,3 MB |
+| Lokalne NMPT Float32 | 1500 m | 0,5 m | ok. 28,27 mln pikseli i 113,1 MB |
+| Maska wyniku Byte w siatce obliczeniowej | 20 km | 5 m | ok. 50,27 mln komórek i 50,3 MB |
+
+Ostatni wiersz to tylko wynik, nie pamięć wejściowego NMT ani całego algorytmu. Transfer ASCII może być wielokrotnie większy niż liczby w tabeli, a GeoTIFF na dysku może być znacznie mniejszy dzięki kompresji. Nie są to prognozy czasu ani rozmiaru konkretnego pobierania.
+
+Przy wielu turbinach liczy się suma/union otoczeń, nie ślepe pomnożenie przez ich liczbę. Przy wielu rozrzuconych odbiorcach łączna powierzchnia szczegółów może jednak znacznie wzrosnąć — dlatego potrzebny jest preflight.
+
+### E10.2. Strategie techniczne
+
+1. Korzystać z istniejących kafli i deduplikacji planu downloadera.
+2. Rozdzielić parametry: źródłowy piksel danych, siatka obliczeniowa oraz LOD wyświetlania.
+3. Nie przeliczać całego NMT do 0,5 m tylko dlatego, że lokalne NMPT ma taki piksel.
+4. Budować VRT/indeks plików oraz czytać okna, a nie wczytywać wielomiliardowej mozaiki przez jedno `ReadAsArray()`.
+5. Przetwarzać partiami turbiny i odbiorców; zwiększanie równoległości jest ograniczone RAM, nie tylko CPU.
+6. Mieć cache okien/bloków z limitem pamięci oraz checkpoint zakończonych par i wyników turbin.
+7. Ograniczać raycasting 3D do par zakwalifikowanych przez wcześniejsze etapy, przy zachowaniu opisanych zasad poprawności filtra.
+8. Dla tylko wskazanych odbiorców nie tworzyć pełnej mapy pikselowej bez potrzeby.
+9. Wyświetlać indeksy i uproszczony podgląd, nie dodawać automatycznie tysięcy rastrów szczegółu.
+10. Oddzielić renderowanie od obliczeń i umożliwić anulowanie bez utraty wszystkich zakończonych wyników.
+
+Szybki screening może proponować następny szczegółowy etap, ale nie wolno sprzedawać uproszczenia jako dokładnego wyniku. W pobliżu horyzontu i cienkich przeszkód potrzebna jest dodatkowa weryfikacja.
+
+## E11. Podział na moduły i wykorzystanie istniejącego kodu
+
+Proponowana struktura nowej części pakietu:
+
+```text
+nmt_nmpt_downloader/visibility/
+├── config.py          # konfiguracja, wersja schematu, walidacja parametrów
+├── receivers.py       # punkty z zabudowy/działek, AGL, kondygnacje
+├── data_plan.py       # AOI NMT/NMPT, korytarze, budżet i cache
+├── quality.py         # pion, epoki, kompletność, jakość nDSM
+├── terrain.py         # GDAL/GRASS, wynik terenowy i maski
+├── los.py             # skończone promienie, krzywizna, modele pokrycia
+├── mesh.py            # budynki, lokalny DSM, geometria turbin
+├── raycast.py         # opcjonalny backend 3D
+├── results.py         # GPKG/raster/JSON/Markdown i agregacje
+└── tasks.py           # zadania QGIS, postęp i anulowanie
+```
+
+To projekt plików — tych modułów nie ma jeszcze w wydaniu 1.1.0.
+
+Z istniejącej wtyczki wykorzystujemy:
+
+- `Engine` do pozyskiwania brakujących danych dla przygotowanych obszarów;
+- `core.py` do geometrii, walidacji i plików, z rozszerzeniem kontroli zgodności modeli;
+- `catalog.py` do rozpoznawania wariantów;
+- `CoverageManager` do inwentarza plików;
+- `QgsTask`, sygnały Qt i wzorzec raportowania.
+
+Nie należy wkładać wszystkich nowych algorytmów do okna. Warto równolegle udostępnić `QgsProcessingProvider`: „terenowa widoczność turbin”, „odbiorcy i lokalny szczegół”, „agregacja wyników”. Umożliwi to modele przetwarzania QGIS, uruchomienia wsadowe i odtwarzalne parametry.
+
+### E11.1. Przykładowa konfiguracja nowego modułu
+
+Poniższy JSON przedstawia docelowy kontrakt, a nie konfigurację akceptowaną dzisiaj przez `Engine` 1.1.0:
+
+```json
+{
+  "visibility_schema_version": 1,
+  "mode": "receivers",
+  "turbines": {
+    "id_field": "turbine_id",
+    "hub_height_agl_field": "hub_m",
+    "rotor_diameter_field": "rotor_m",
+    "targets": ["hub", "top_tip"]
+  },
+  "analysis_radius_m": 20000,
+  "eye_height_agl_m": 1.7,
+  "receivers": {
+    "source_role": "buildings_or_parcels",
+    "sampling": "explicit_points_or_boundary_and_grid",
+    "spacing_m": 10
+  },
+  "terrain": {
+    "horizontal_crs": "EPSG:2180",
+    "vertical_reference": "PL-EVRF2007-NH",
+    "screening_grid_m": 5,
+    "refine_boundary_cases": true
+  },
+  "detail": {
+    "enabled": true,
+    "radius_m": 1000,
+    "centers": ["receivers"],
+    "resolution": "best_available_compatible",
+    "download_policy": "local_neighborhoods",
+    "use_cached_outside_neighborhoods": true,
+    "unknown_obstacles_policy": "mark_partial"
+  },
+  "physics": {"earth_curvature": true, "optical_refraction_k": 0.14285714285714285},
+  "quality": {"mixed_vertical_reference": "reject", "missing_required_data": "unknown"},
+  "execution": {"cancelable": true, "checkpoint": true}
+}
+```
+
+Plik zadania musi również identyfikować rzeczywiste warstwy, źródła, pola i ich snapshoty; przykładowy JSON nie zawiera danych ani ścieżek żadnej inwestycji. Przed implementacją trzeba ustalić trwały sposób identyfikacji plików/warstw, jednostki i reguły migracji konfiguracji.
+
+## E12. Wyniki i raport dla inwestora
+
+Proponowane produkty:
+
+- GeoTIFF dla widoczności terenowej per wysokość celu i mapa zbiorcza.
+- GeoPackage z turbinami, punktami obserwacji i tabelą par turbina–odbiorca.
+- Warstwa linii diagnostycznych wybranych par, z zapasem wysokości i stanem.
+- Warstwa pokrycia NMT/NMPT użytego w zadaniu.
+- JSON z parametrami, wersją algorytmu, źródłami, datami, pionem, tolerancją i statusem danych.
+- Markdown/PDF w przyszłości: porównanie wariantów, mapy, ograniczenia modelu i scenariusze wysokości.
+- Opcjonalna scena 3D; raport 2D nie powinien zależeć od działającego eksportera 3D.
+
+Przykładowe pola tabeli par:
+
+```text
+turbine_id, receiver_id, distance_m, target_kind,
+eye_z, target_z, vertical_reference, result_class,
+terrain_coverage, detail_length_m, ray_length_m,
+minimum_clearance_m, borderline, algorithm_version
+```
+
+Do agregacji dołączyć osobno: liczbę turbin widocznych w pełnym modelu, potencjalnych przy częściowym szczególe, zasłoniętych i nieustalonych. Nie sumować ich pod jedną etykietą „widocznych”. Dla działek podać liczbę i rozmieszczenie próbek oraz sposób agregacji.
+
+## E13. Kolejność implementacji i kryteria odbioru
+
+### Pakiet 0 — kontrakt i przygotowanie danych
+
+- Formularz turbin, wysokości, R i odbiorców.
+- Walidacja AGL/Z, pionu, dostępności źródeł i skali obliczeń.
+- Preflight danych NMT/NMPT, konfiguracja zapisywana do pliku.
+- Odbiór: jednoznaczny plan i koszt orientacyjny przed transferem; niepoprawne dane wskazane konkretnym komunikatem.
+
+### Pakiet 1 — działające MVP terenowe
+
+- NMT, piasta i górny punkt, wybór całej mapy albo odbiorców.
+- Krzywizna i wspólny parametr refrakcji.
+- Wyniki per turbina i zbiorcze, maska obszaru, raport.
+- Praca w tle, anulowanie, ponowne użycie danych i wyników.
+- Odbiór: odtwarzalny mały przykład o znanej geometrii, wyniki bez pomylenia braku danych z brakiem widoczności.
+
+### Pakiet 2 — oszczędny lokalny NMPT
+
+- Checkbox i promień 650/1000/1500/własny.
+- Centra z turbin/odbiorców/własnych warstw.
+- Obsługa różnych rozdzielczości bez globalnego upsamplingu.
+- LOS ze statusem pokrycia; jawny wynik częściowy.
+- Odbiór: wykrycie przeszkody blisko domu, zachowanie statusu częściowego dla nieznanego odcinka i brak podwójnego pobierania wspólnych kafli.
+
+### Pakiet 3 — lokalne 3D
+
+- QGIS 3D: teren, lokalny DSM, modele turbin i punkt obserwacji.
+- Własne budynki o znanej wysokości; działki jako obszary oceny.
+- Podgląd LOD i brak nadmiernego zużycia RAM.
+- Odbiór: zgodność położenia i wysokości między 2D/3D, poprawna obsługa instalacji bez dostępnego 3D.
+
+### Pakiet 4 — analiza geometrii 3D
+
+- Indeks trójkątów i grupowe promienie do próbek wirnika.
+- Obsługa orientacji celu, końców odcinka, tolerancji i niekompletnej sceny.
+- Porównanie z analitycznymi scenami kontrolnymi i oceną terenową/fotograficzną.
+- Odbiór: stabilne wyniki przy zwiększaniu gęstości próbek, jawne ograniczenia modelu i akceptowalna wydajność dla uzgodnionego zestawu inwestycji.
+
+Nie planować pełnego 3D przed dopracowaniem wysokości, masek danych i wyników terenowych. Wiele użytecznych decyzji projektowych można podjąć po pakiecie 1 lub 2.
+
+## E14. Plan testów nowego modułu
+
+Poniższe testy są **do wdrożenia**; nie należy mylić ich z 18 istniejącymi testami downloadera.
+
+| Przypadek | Oczekiwane zachowanie |
+|---|---|
+| Płaski teren bez przeszkód | Widoczność zgodna z wysokościami i przyjętą krzywizną |
+| Znany wał między końcami | Prawidłowa blokada i wskazanie odcinka |
+| Drzewo przy obserwatorze | Blokada po uwzględnieniu lokalnego NMPT; model tylko przy turbinie nie udaje pełnego wyniku |
+| Przeszkoda poza lokalnym otoczeniem | Wynik częściowy, dopóki nie ma danych dla tego odcinka |
+| NoData na trasie | Nie jest traktowane jako teren o wysokości 0 ani automatyczna widoczność |
+| NMPT 0,5 m i NMT 1 m | Prawidłowe georeferencje i wysokości końców bez globalnego niepotrzebnego przeliczenia |
+| Dom bez wysokości | Nie powstaje wymyślona bryła; można użyć go do planu danych/odbiorców |
+| Działka duża i nieregularna | Wyniki zależą jawnie od próbek; centroid nie udaje całej działki |
+| Obserwator na różnych elewacjach | Własny budynek jest poprawnie uwzględniony, nie znika z modelu |
+| Turbiny o różnych wysokościach | Osobne bezwzględne Z i wyniki piasty/końcówki |
+| Mieszane układy pionowe | Błąd jakości albo jawna zweryfikowana transformacja, nigdy ciche połączenie |
+| Promień 20 km i różne k | Jawna czułość na krzywiznę/refrakcję, zgodna konwencja backendów |
+| Przeszkoda za celem w 3D | Nie blokuje odcinka do turbiny |
+| Samoprzecięcie przy początku/końcu promienia | Kontrolowana tolerancja, brak przypadkowej blokady przez model celu |
+| Cienka przeszkoda między próbkami | Test ograniczeń próbkowania i przechodzenia przez komórki |
+| Wiele turbin i wspólne bufory | Deduplikacja pobrań, ograniczona pamięć, checkpoint i poprawna agregacja |
+| Anulowanie i restart | Zachowane ukończone wyniki, brak uznania częściowego zadania za kompletne |
+
+Dla GIS porównać wyniki małych przypadków między GDAL a GRASS po uzgodnieniu wysokości, krzywizny, interpolacji, maski i granic rastra. Różnice na granicach nie muszą automatycznie oznaczać błędu; powinny zostać wyjaśnione. Dla 3D potrzebne są sceny o znanych przecięciach i niezależna kontrola wybranych widoków.
+
+W trakcie przygotowania tego planu wykonano tylko mały eksperyment numeryczny z przeszkodą przy obserwatorze oraz obliczenia wielkości danych. Nie wykonano pełnej analizy 3D ani nie zintegrowano jej z GUI.
+
+## E15. Ocena trudności i kompetencji potrzebnych do realizacji
+
+**Wersja podstawowa na NMT jest wykonalnym rozszerzeniem obecnej aplikacji.** Mamy już pobieranie, geometrię buforów, cache, indeksy, zadania w tle i raporty. Trzeba jednak zbudować osobny przebieg analizy i poprawnie rozstrzygać wysokości oraz brak danych.
+
+**Wersja hybrydowa jest większą pracą algorytmiczną.** Trudność nie polega na dodaniu checkboxa, tylko na policzeniu wyniku mimo różnych siatek i częściowego modelu przeszkód, bez fałszywej pewności. Potrzebne są geometria, dane, wydajność, stan pokrycia i testy.
+
+**Wizualizacja lokalna 3D jest osobnym, użytecznym etapem.** Dokładniejszy raycasting tarczy wirnika, różne kierunki, roślinność i duże obszary oznaczają większy moduł produktu. Nie jest rozsądne obiecywać kompletnej wersji produkcyjnej jako drobnej poprawki.
+
+Do realizacji potrzebna jest wiedza PyQGIS/Qt, GDAL/OGR, modelowania wysokości, obliczeń LOS i przetwarzania dużych danych. Analiza 3D wymaga dodatkowo geometrii obliczeniowej, bibliotek raycastingu i kontroli błędów numerycznych. Takie rozwiązanie można zaprojektować i zaimplementować etapami; istniejący prototyp NMT i zweryfikowane biblioteki dają konkretny punkt startowy. Do użycia w formalnej dokumentacji inwestycji potrzebna jest także walidacja metody i danych względem uzgodnionych wymagań branżowych, nie tylko poprawne wykonanie kodu.
+
+Nie podano wiążącej estymacji dni: zależy ona m.in. od liczby turbin, zasięgu, liczby odbiorców, dokładności celu, dostępności danych i tego, czy „3D” oznacza podgląd, czy pełne badanie przesłaniania. Kryteria pakietów pozwalają ustalić zakres bez zamawiania od razu najcięższej wersji.
+
+## E16. Sprawdzone materiały do implementacji
+
+W trakcie dopisywania planu odczytano dokumentację i kod dostępne na GitHub, a nie tylko nazwy projektów:
+
+1. [GDAL Viewshed — dokumentacja wersji 3.10.3](https://github.com/OSGeo/gdal/blob/v3.10.3/doc/source/programs/gdal_viewshed.rst): wysokości nad DEM, projektowany CRS, współczynnik krzywizny i ograniczenie wejściowego NoData. To wersja bliska zainstalowanemu GDAL 3.10.3.
+2. [GRASS r.viewshed — dokumentacja i opis algorytmu](https://github.com/OSGeo/grass/blob/main/raster/r.viewshed/r.viewshed.md): interpolacja, opcjonalna krzywizna, promień i praca z budżetem pamięci/trybem dyskowym.
+3. [QGIS Visibility Analysis](https://github.com/zoran-cuckovic/QGIS-visibility-analysis): istniejąca implementacja narzędzi widoczności/intervisibility w QGIS, przydatna jako punkt porównania workflow i testów. Nie jest obecnie zależnością naszej wtyczki.
+4. [QGIS 3D Map Settings — kod API](https://github.com/qgis/QGIS/blob/master/src/3d/qgs3dmapsettings.h): punkt startowy do integracji sceny. Należy wybrać API docelowej wspieranej wersji QGIS, nie kopiować bez sprawdzenia kodu z master.
+5. [Open3D RaycastingScene — przykład oficjalny](https://github.com/isl-org/Open3D/blob/main/docs/jupyter/geometry/ray_casting.ipynb): promienie, `t_hit` i identyfikatory trafionych geometrii.
+6. [trimesh — ray/triangle implementation](https://github.com/mikedh/trimesh/blob/main/trimesh/ray/ray_triangle.py): dostępne operacje przecięcia i alternatywne backendy.
+7. [Qgis2threejs](https://github.com/minorua/Qgis2threejs): odniesienie dla eksportu scen, nie zamiennik silnika analitycznego.
+
+Dostępność tych materiałów potwierdzono w chwili opracowania. Nie wykonano jeszcze testów ich wszystkich kombinacji w Windows/QGIS. Przy ewentualnym użyciu kodu lub dołączeniu zależności trzeba sprawdzić licencję, wersję, sposób dystrybucji i zgodność środowiska binarnego.
+
 
 # Źródła i punkty odniesienia
 
