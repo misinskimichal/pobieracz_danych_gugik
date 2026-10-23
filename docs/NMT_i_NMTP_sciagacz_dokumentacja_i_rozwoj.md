@@ -1,11 +1,12 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Wersja opisywanej wtyczki:** 1.1.0.  
+**Bieżąca wersja wtyczki:** 1.2.0; podstawy pobierania opisano od wydania 1.1.0.
+
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
 **Skróty:** NMT = model samego terenu, NMPT = model górnej powierzchni terenu, roślinności i zabudowy. Pisownia „NMTP” pozostaje częścią zamówionej nazwy produktu; techniczny skrót zasobu to „NMPT”.
 
-Dokument opisuje działającą implementację i osobno proponowane rozszerzenia. Pomysły i przykłady analityczne z suplementu nie są funkcjami dostarczonymi w ZIP-ie 1.1.0.
+Dokument opisuje działającą implementację i osobno proponowane rozszerzenia. **Wersja 1.2.0 dodaje rzeczywistą analizę linii widzenia z NMPT** — stan wdrożenia opisuje suplement F i [instrukcja 1.2.0](Instrukcja_NMPT_1.2.0.md). Suplement E zachowuje szerszy plan, w tym przyszłe pełne 3D. Pozostałe przykłady biznesowe i prototypy nie stają się automatycznie funkcjami wtyczki.
 
 ## Spis treści
 
@@ -21,7 +22,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 10. Suplement C: przykłady Pythona i plan wdrożenia.
 11. Suplement D: plan rozwoju produktu i granice obecnej wersji.
 12. Suplement E: plan widoczności turbin — NMT, lokalne NMPT i 3D.
-13. Bibliografia.
+13. Suplement F: wdrożona wersja 1.2.0 z priorytetem NMPT.
+14. Bibliografia.
 
 ## 1. Czy ostatnie pobieranie poszło poprawnie?
 
@@ -52,6 +54,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Co potwierdza ten audyt?** Spójność przebiegu i wyników zgłoszonych przez wtyczkę. Same pliki GeoTIFF, indeksy GeoPackage ani projekt QGIS nie były dołączone, więc niezależnie nie odczytano ich pikseli ani nie potwierdzono działania widoku mapy na tym komputerze. Nie wynika z tego także dokładność geodezyjna, aktualność wszystkich pomiarów czy kompletność bardzo wąskich obiektów, np. przewodów.
 
 ## 2. Funkcjonalność i instrukcja użytkowania
+
+W oknie pobierania 1.2.0 domyślnie zaznaczone jest **samo NMPT**. NMT można włączyć osobno. Nowa analiza widoczności domyślnie uwzględnia NMPT, a NMT służy pomocniczo do poziomu gruntu i kontroli terenu; patrz suplement F.
 
 ### 2.1. Przygotowanie wejścia
 
@@ -111,6 +115,8 @@ pobieracz_danych_gugik/
 │   ├── core.py           # geometrie, kafle, walidacja rastrów, konwersja
 │   ├── engine.py         # przebieg zadania, HTTP, retry, raporty
 │   ├── coverage.py       # indeksy folderów i dodawanie rastrów
+│   ├── visibility.py     # linie widzenia, odczyt blokowy NMT/NMPT i wyniki
+│   ├── visibility_dialog.py # formularz analizy i prezentacja w projekcie
 │   ├── icon.svg
 │   ├── README.md
 │   └── LICENSE
@@ -143,7 +149,7 @@ import numpy, requests, lxml
 print(Qgis.QGIS_VERSION, gdal.VersionInfo(), numpy.__version__)
 ```
 
-Wersję 1.1.0 sprawdzano z QGIS 3.40.6, Qt5 i Pythonem 3.13 na Linuksie. Metadata dopuszcza QGIS 3.28–3.x; nie przeprowadzono tutaj macierzy testów wszystkich wspieranych wersji. Kod korzysta m.in. z `math.lcm`, więc wymaga Pythona co najmniej 3.9. QGIS 4 nie jest deklarowany jako obsługiwany.
+Wersje 1.1.0 i 1.2.0 sprawdzano z QGIS 3.40.6, Qt5 i Pythonem 3.13 na Linuksie. Metadata dopuszcza QGIS 3.28–3.x; nie przeprowadzono tutaj macierzy testów wszystkich wspieranych wersji. Kod korzysta m.in. z `math.lcm`, więc wymaga Pythona co najmniej 3.9. QGIS 4 nie jest deklarowany jako obsługiwany.
 
 ### 3.3. Pobranie źródeł
 
@@ -387,7 +393,7 @@ QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest
 
 W środowisku z katalogiem domowym tylko do odczytu ustaw także `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` i `XDG_DATA_HOME` na własne zapisywalne katalogi. W Windows uruchom testy w środowisku QGIS; składnia ustawiania zmiennych zależy od konsoli.
 
-Sprawdzona wersja 1.1.0 ma **18 testów zakończonych poprawnie**. Obejmują m.in. deduplikację, filtr zaznaczenia, bufor metryczny z EPSG:4326, dokładne i najbliższe warianty, fallback układu z zachowaniem zasięgu, NoData, XML błędu z HTTP 200, HTTP 503/404, ponowienia, cache, anulowanie, ochronę obcych plików, aktualizację indeksu po dodaniu/usunięciu/podmianie, zapis/odczyt projektu i cały przebieg GUI → pobranie → indeksy → mapa.
+Sprawdzona wersja 1.1.0 miała **18 testów zakończonych poprawnie**. Obejmują m.in. deduplikację, filtr zaznaczenia, bufor metryczny z EPSG:4326, dokładne i najbliższe warianty, fallback układu z zachowaniem zasięgu, NoData, XML błędu z HTTP 200, HTTP 503/404, ponowienia, cache, anulowanie, ochronę obcych plików, aktualizację indeksu po dodaniu/usunięciu/podmianie, zapis/odczyt projektu i cały przebieg GUI → pobranie → indeksy → mapa. **Bieżąca wersja 1.2.0 przechodzi 39 testów**, dodając przypadki widoczności NMPT, cache blokowego, automatycznego pozyskania danych, nowych wyników i GUI; szczegóły w F5.
 
 Lokalny serwer testowy zastępuje WCS. To pozwala deterministycznie sprawdzać awarie bez obciążania Geoportalu. Oddzielnie wykonano małe rzeczywiste pobrania obu modeli. Test użytkownika opisany w rozdziale 1 dostarcza dodatkowego dowodu działania pobierania na jego komputerze, ale nie zastępuje pełnej macierzy systemów i wersji QGIS.
 
@@ -420,9 +426,9 @@ output = Path('releases') / f'NMT i NMTP ściągacz-{version}.zip'
 output.parent.mkdir(exist_ok=True)
 allowed = {'.py', '.svg', '.md', '.txt'}
 with ZipFile(output, 'w', compression=ZIP_DEFLATED) as archive:
-    for path in sorted(root.iterdir()):
-        if path.is_file() and (path.suffix in allowed or path.name == 'LICENSE'):
-            archive.write(path, str(Path(root.name) / path.name))
+    for path in sorted(root.rglob('*')):
+        if '__pycache__' not in path.parts and path.is_file() and (path.suffix in allowed or path.name == 'LICENSE'):
+            archive.write(path, str(Path(root.name) / path.relative_to(root)))
 with ZipFile(output) as archive:
     assert archive.testzip() is None
     assert f'{root.name}/metadata.txt' in archive.namelist()
@@ -436,7 +442,11 @@ Sprawdzenie CRC ZIP-a nie zastępuje uruchomienia wtyczki. Test dystrybucji powi
 
 QGIS → Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP. Przy aktualizacji zakończ zadania i zrestartuj QGIS, aby wyładować stare moduły. Foldery danych pozostają niezależne od folderu instalacji.
 
-[ZIP 1.1.0 do pobrania](https://github.com/misinskimichal/pobieracz_danych_gugik/raw/refs/heads/codex/nmt-nmtp-sciagacz/releases/NMT%20i%20NMTP%20%C5%9Bci%C4%85gacz-1.1.0.zip).
+[Bieżący ZIP 1.2.0 do pobrania](https://github.com/misinskimichal/pobieracz_danych_gugik/raw/refs/heads/codex/nmt-nmtp-sciagacz/releases/NMT%20i%20NMTP%20%C5%9Bci%C4%85gacz-1.2.0.zip).
+
+SHA-256 ZIP-a **1.2.0**: `079ec828bb91389a6784d28ede3bbeb108176c9c248eb1729fb5a9414adf80d4` (63014 bajtów). Plik sumy jest zapisany obok ZIP-a w `releases/`. Odczytano dokładnie tę paczkę przez mechanizm ładowania QGIS, otwarto oba okna i sprawdzono domyślny wybór NMPT.
+
+[Archiwalny ZIP 1.1.0](https://github.com/misinskimichal/pobieracz_danych_gugik/raw/refs/heads/codex/nmt-nmtp-sciagacz/releases/NMT%20i%20NMTP%20%C5%9Bci%C4%85gacz-1.1.0.zip).
 
 SHA-256 opublikowanej paczki 1.1.0:
 
@@ -1027,7 +1037,7 @@ Wycenę można oprzeć na przygotowaniu projektu i cyklicznej aktualizacji albo 
 
 # Suplement E. Plan implementacji widoczności turbin — od NMT do lokalnego 3D
 
-**Status:** plan nowego modułu, nie funkcja ZIP-a 1.1.0. Dokumentację rozbudowano 23 października 2026 r. bez zmiany kodu wtyczki ani jej numeru wersji.
+**Status:** szerszy plan opracowany przy wydaniu 1.1.0. W wersji **1.2.0 wdrożono punktowe linie widzenia z lokalnym / pełnym NMPT**; ich rzeczywisty zakres opisuje suplement F. Pełna mapa rastrowa, scena 3D i ray tracing wirnika pozostają planem. Poniższe projekty modułów i konfiguracji nie są deklaracją kompletnej implementacji.
 
 ## E1. Cel i rekomendowany model pracy
 
@@ -1539,6 +1549,70 @@ W trakcie dopisywania planu odczytano dokumentację i kod dostępne na GitHub, a
 
 Dostępność tych materiałów potwierdzono w chwili opracowania. Nie wykonano jeszcze testów ich wszystkich kombinacji w Windows/QGIS. Przy ewentualnym użyciu kodu lub dołączeniu zależności trzeba sprawdzić licencję, wersję, sposób dystrybucji i zgodność środowiska binarnego.
 
+
+# Suplement F. Wdrożona wersja 1.2.0 — priorytet NMPT
+
+**Stan rzeczywisty:** kod i ZIP 1.2.0 zawierają nową analizę linii widzenia, włączającą NMPT domyślnie. W głównym pobieraniu domyślnie wybrane jest samo NMPT. Ten suplement aktualizuje wcześniejsze zapisy o braku modułu analiz; szerszy plan 3D z E pozostaje częściowo przyszły.
+
+## F1. Instrukcja i pierwszy test
+
+[Osobna instrukcja krok po kroku, konfiguracja, kolory i diagnostyka](Instrukcja_NMPT_1.2.0.md).
+
+[Pobierz ZIP 1.2.0](https://github.com/misinskimichal/pobieracz_danych_gugik/raw/refs/heads/codex/nmt-nmtp-sciagacz/releases/NMT%20i%20NMTP%20%C5%9Bci%C4%85gacz-1.2.0.zip).
+
+Zainstaluj ZIP w menedżerze wtyczek i ponownie uruchom QGIS po aktualizacji. Otwórz **Nowe: analiza widoczności turbin z NMPT…** w głównym oknie. Wybierz punktowe turbiny, wysokość piasty i średnicę wirnika (stałe albo pola), obserwatorów i promień od turbiny. NMPT jest włączone: domyślnie lokalnie do 1000 m od obserwatorów i turbin, alternatywnie 650 / 1500 m / własna wartość albo **cała linia**. Osobne foldery NMT, NMPT i wyników mogą być tymi samymi folderami danych co wcześniej.
+
+NMT jest nadal potrzebne do ustalenia poziomu gruntu — oka nie umieszcza się na dachu NMPT. Wybór jednego układu wysokościowego obowiązuje oba modele. Pobieranie automatyczne korzysta z najlepszego dostępnego piksela źródłowego w tym układzie, bez drugiego pionu. Można je wyłączyć i użyć wyłącznie lokalnych danych. Odległe pary poza promieniem nie pobierają danych. Limit jednego zadania to 20000 par, łącznie z odległymi; dla dużych warstw wybierz zaznaczenie.
+
+Dla działki / budynku powstaje jeden punkt wewnętrzny, a nie pełny wynik dla wszystkich miejsc poligonu. W przypadku budynku zalecane są własne punkty na zewnątrz elewacji. Oko pod powierzchnią dachu lub korony daje stan niejednoznaczny. W pierwszym teście wybierz jedną turbinę i kilka punktów przy budynkach.
+
+## F2. Architektura i uzasadnienie
+
+| Plik / rozwiązanie | Działanie | Powód |
+|---|---|---|
+| `visibility_dialog.py` | Formularz, snapshoty, `VisibilityTask`, dodanie wyników do projektu | Worker nie dotyka widgetów ani warstw należących do projektu |
+| `visibility.py` / `read_points` | Przeliczenie wejścia do EPSG:2180, punkty odbiorców, odczyt wysokości turbin | Metryczne odległości i jawne znaczenie wysokości |
+| `VisibilityEngine.download` | Korytarze linii: bufor 2 m NMPT / 5 m NMT, ograniczone lokalnym zakresem NMPT | Pobieranie danych dla odbiorców, bez pełnych dysków 20 km |
+| Istniejący `Engine` | DescribeCoverage, najlepszy wariant, kontrola cache, strumienie i diagnostyka | Jedna sprawdzona ścieżka pozyskania danych |
+| `RasterStore` | Indeks przestrzenny nagłówków, LRU 8 plików i 32 bloków 256 × 256 na zasób | Około 16 MiB samych bloków Float64 na zasób, bez pełnego scalania rastrów |
+| `ray_breaks` / `sample_ray_cells` | Podział we wszystkich granicach komórek, oba boki linii biegnącej po granicy siatki | Brak stałego kroku przeskakującego przez wąskie przeszkody |
+| `analyze_pair` | Oko i cel z NMT, przeszkody z maksimum NMT / wymaganego NMPT | Rozdzielenie gruntu od górnej powierzchni pokrycia |
+| GeoPackage przez OGR | Trwałe punkty i linie bez tworzenia warstw projektu w workerze | Dodanie do mapy dopiero po zamknięciu zapisu |
+
+Do prześwitu stosuje się korektę krzywizny i refrakcji z E7: `R_eff=6371000/(1-k)`, domyślnie `k=1/7`. Wysokość komórki jest stała; sprawdzane jest minimum prześwitu na całym jej przedziale względem skorygowanej linii. Pojedyncze dotknięcie narożnika o zerowej długości nie stanowi odcinka przesłaniania. Modele poniżej rozdzielczości piksela nie są odtwarzane.
+
+Tolerancja wysokości 0,25 m oznacza wynik graniczny, nie deklarowaną dokładność danych. Spadek NMPT poniżej NMT o ponad 3 m daje sygnał niespójności. Najdrobniejszy dostępny ważny piksel ma pierwszeństwo; przy NoData w nim może być wykorzystany poprawny piksel z innego zgodnego pliku. Faktyczne pliki są zapisane przy wyniku i w manifeście nagłówków. Nie ma cichej transformacji wysokości ani automatycznego przypisania nieznanego pionu.
+
+Nowe GeoTIFF-y zapisują dokładną siatkę zweryfikowanego żądania WCS. Dla starszych plików z metadanymi wtyczki dopuszczona jest korekta submilimetrowego zaokrąglenia do deklarowanej siatki, maksymalnie 1 mm; JSON zachowuje oryginalne `source_gt` i użyte `gt`. Unika to sztucznych mikroszczelin między sąsiednimi kaflami. Maskę AOI oblicza się raz przed transferem; brzegowe kafle bez żądanych środków pikseli nie są pobierane.
+
+## F3. Stany i wiarygodność
+
+| Stan | Znaczenie |
+|---|---|
+| `blocked_detail` | Znana przeszkoda NMPT przecina linię |
+| `blocked_terrain` | Znany teren przecina linię |
+| `visible_modeled` | Brak przeszkody i pełne wymagane pokrycie NMT/NMPT wzdłuż całej linii |
+| `potential_visible_partial_detail` | Lokalny NMPT nie blokuje, ale część trasy nie była sprawdzana na NMPT |
+| `visible_terrain_only` | Użytkownik wyłączył NMPT; sprawdzono tylko NMT |
+| `unknown_required_data` | Brak danych na wymaganej części trasy, błąd odczytu lub błąd tej pary |
+| `uncertain_geometry` | Oko/cel wewnątrz pokrycia, wynik graniczny lub duża niespójność modeli |
+| `outside_analysis` | Para poza wybranym promieniem |
+
+Braki nie są wysokością 0 i nie zatrzymują pozostałych par. Znana przeszkoda może potwierdzić przesłonięcie mimo braków w innym miejscu; wynik zapisuje wtedy informację o tych brakach. Pola pokrycia to procent długości linii, nie pewność statystyczna. `completed` oznacza ukończenie, a nie pełne potwierdzenie widoczności w modelu lokalnym.
+
+## F4. Wyniki
+
+`widocznosc_DATA_ID/` zawiera `widocznosc.gpkg` (obserwatorzy, turbiny, linie_widzenia), `wyniki.csv`, `report.json`, `report.md`, `events.jsonl`. Jeśli pobieranie było włączone, powstają dodatkowe raporty obu zasobów. JSON obejmuje konfigurację, punkty, użyte pliki, georeferencję, rozmiary i daty modyfikacji, wyniki i powody problemów. Nie jest pełnym kryptograficznym manifestem zawartości.
+
+**Pokaż wyniki na mapie** dodaje punkty i linie z legendą statusów. Dotychczasowe indeksy folderów aktualizują pokrycie pobranych kafli. Same wyniki widoczności są zapisem jednego zadania; po zmianie rastrów należy obliczyć nowe. Podczas transferu widoczne są aktywne pliki, MB bieżącego zasobu i łączne, prędkość oraz przybliżone ETA / pozostałe MB etapu. Analiza pokazuje aktualną parę, postęp i liczniki stanów. Anulowanie zachowuje ukończone wyniki.
+
+## F5. Walidacja i granice wydania
+
+**39 testów przechodzi**: stare pobieranie oraz nowe drzewo szerokie na 0,5 m, przeszkoda przy obserwatorze, zakres lokalny / pełny, wymagane NoData, piasta / koniec łopaty, oko pod dachem, brak gruntu końca, różne układy, krzywizna, obie strony granicy siatki, ograniczenie cache, korekta starych siatek, anulowanie, kontynuowanie po błędzie jednej pary, automatyczne pobranie i ponowne użycie, GeoPackage / CSV / JSON / MD oraz interfejs z zadaniem w tle. Flake8 i Bandit nie zgłosiły wymagających poprawek problemów. Sprawdzana jest również instalacyjna paczka przez rzeczywisty mechanizm ładowania wtyczek QGIS.
+
+Mały rzeczywisty test WCS w publicznym punkcie w Warszawie odczytał NMT 1 m i NMPT 0,5 m w EVRF2007 i zapisał wynik. Powtórzenie użyło istniejących kafli bez ponownego transferu danych. Punkt znajdujący się pod pokryciem NMPT oznaczono jako niejednoznaczny. To kontrola działania łańcucha danych; nie wykonano jeszcze walidacji terenowej prawdziwej farmy ani testów Windows/macOS.
+
+Wydanie realizuje **linie widzenia 2,5D**, nie pełną scenę 3D. NMPT jest nieprzezroczystą górną powierzchnią; nie opisuje prześwitów, wnętrza korony, sezonowości ani geometrii obracającego się wirnika. Sprawdzany jest pojedynczy punkt celu. Nie ma jeszcze mapy rastrowej dla każdego punktu otoczenia, procentu widocznego wirnika, ray tracingu siatek, sceny 3D ani próbkowania całych elewacji / działek. Są to dalsze zadania z E, a nie ukryte opcje 1.2.0.
 
 # Źródła i punkty odniesienia
 

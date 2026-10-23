@@ -165,7 +165,7 @@ class ResourceControls(QGroupBox):
 
 
 class DownloadDialog(QDialog):
-    def __init__(self, iface, coverage_manager=None):
+    def __init__(self, iface, coverage_manager=None, open_visibility=None):
         super().__init__(iface.mainWindow())
         self.iface = iface
         self.task = None
@@ -177,6 +177,10 @@ class DownloadDialog(QDialog):
         self.setWindowTitle(PLUGIN_NAME)
         self.resize(1000, 850)
         layout = QVBoxLayout(self)
+        if open_visibility is not None:
+            visibility_button = QPushButton('Nowe: analiza widoczności turbin z NMPT…')
+            visibility_button.clicked.connect(open_visibility)
+            layout.addWidget(visibility_button)
         self.inputs = QGroupBox('Obszar i dane')
         form = QFormLayout(self.inputs)
         self.layer = QgsMapLayerComboBox()
@@ -195,7 +199,7 @@ class DownloadDialog(QDialog):
         form.addRow('Promień wokół geometrii:', self.radius)
         self.nmt = QCheckBox('NMT — teren')
         self.nmpt = QCheckBox('NMPT — teren i pokrycie')
-        self.nmt.setChecked(True)
+        self.nmt.setChecked(False)
         self.nmpt.setChecked(True)
         kinds = QWidget()
         kinds_layout = QHBoxLayout(kinds)
@@ -287,6 +291,8 @@ class DownloadDialog(QDialog):
         layout.addLayout(buttons)
         self.nmt.toggled.connect(self.resource_controls['NMT'].setEnabled)
         self.nmpt.toggled.connect(self.resource_controls['NMPT'].setEnabled)
+        self.resource_controls['NMT'].setEnabled(self.nmt.isChecked())
+        self.resource_controls['NMPT'].setEnabled(self.nmpt.isChecked())
 
     def refresh_catalog(self):
         self.catalog_button.setEnabled(False)
@@ -457,6 +463,8 @@ class TerrainPlugin:
         self.dialog = None
         self.action = None
         self.coverage_manager = None
+        self.visibility_dialog = None
+        self.visibility_action = None
 
     def initGui(self):
         self.coverage_manager = CoverageManager(self.iface)
@@ -465,15 +473,30 @@ class TerrainPlugin:
         self.action.triggered.connect(self.open)
         self.iface.addPluginToMenu(PLUGIN_NAME, self.action)
         self.iface.addToolBarIcon(self.action)
+        self.visibility_action = QAction('Widoczność turbin — NMPT', self.iface.mainWindow())
+        self.visibility_action.triggered.connect(self.open_visibility)
+        self.iface.addPluginToMenu(PLUGIN_NAME, self.visibility_action)
 
     def open(self):
         if self.dialog is None:
-            self.dialog = DownloadDialog(self.iface, self.coverage_manager)
+            self.dialog = DownloadDialog(self.iface, self.coverage_manager, self.open_visibility)
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
 
+    def open_visibility(self):
+        from .visibility_dialog import VisibilityDialog
+        if self.visibility_dialog is None:
+            self.visibility_dialog = VisibilityDialog(self.iface, self.coverage_manager)
+        self.visibility_dialog.show()
+        self.visibility_dialog.raise_()
+        self.visibility_dialog.activateWindow()
+
     def unload(self):
+        if self.visibility_dialog:
+            if self.visibility_dialog.task:
+                self.visibility_dialog.task.cancel()
+            self.visibility_dialog.hide()
         if self.dialog:
             if self.dialog.catalog_task:
                 self.dialog.catalog_task.cancel()
@@ -485,3 +508,5 @@ class TerrainPlugin:
         if self.action:
             self.iface.removePluginMenu(PLUGIN_NAME, self.action)
             self.iface.removeToolBarIcon(self.action)
+        if self.visibility_action:
+            self.iface.removePluginMenu(PLUGIN_NAME, self.visibility_action)

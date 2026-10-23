@@ -13,7 +13,7 @@ from qgis.core import (
     QgsFeature, QgsGeometry, QgsRectangle, QgsSpatialIndex,
 )
 
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 PLUGIN_NAME = 'NMT i NMTP ściągacz'
 STATUS_LABELS = {'downloaded': 'pobrane', 'reused': 'wcześniej pobrane', 'partial': 'częściowe braki',
                  'missing': 'brak danych', 'failed': 'błąd', 'canceled': 'anulowane',
@@ -191,7 +191,25 @@ def tile_aoi(tile, buffers, index=None):
     return result
 
 
-def inspect_raster(path, tile, aoi, signature_required=False):
+def raster_aoi_mask(tile, aoi):
+    """Rasterize once per request; also skip thin edge tiles with no requested cell centres."""
+    expected = (tile.bbox[0], tile.resolution, 0, tile.bbox[3], 0, -tile.resolution)
+    mask_ds = gdal.GetDriverByName('MEM').Create('', tile.pixels, tile.pixels, 1, gdal.GDT_Byte)
+    mask_ds.SetGeoTransform(expected)
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(2180)
+    mask_ds.SetProjection(srs.ExportToWkt())
+    vector = ogr.GetDriverByName('Memory').CreateDataSource('')
+    layer = vector.CreateLayer('aoi', srs, ogr.wkbUnknown)
+    feat = ogr.Feature(layer.GetLayerDefn())
+    feat.SetGeometry(ogr.CreateGeometryFromWkb(bytes(aoi.asWkb())))
+    layer.CreateFeature(feat)
+    if gdal.RasterizeLayer(mask_ds, [1], layer, burn_values=[1]) != 0:
+        raise ValueError('Nie udało się przygotować maski obszaru')
+    return mask_ds.ReadAsArray().astype(bool)
+
+
+def inspect_raster(path, tile, aoi, signature_required=False, mask=None):
     # GDAL error mode remains unchanged for the QGIS host process.
     ds = gdal.Open(str(path), gdal.GA_ReadOnly)
     if ds is None:
@@ -213,19 +231,8 @@ def inspect_raster(path, tile, aoi, signature_required=False):
         missing |= values == nodata
     del values
     # Count only pixels with centres inside the requested buffer, not outside edge tiles.
-    mask_ds = gdal.GetDriverByName('MEM').Create('', tile.pixels, tile.pixels, 1, gdal.GDT_Byte)
-    mask_ds.SetGeoTransform(expected)
-    srs = osr.SpatialReference()
-    srs.ImportFromEPSG(2180)
-    mask_ds.SetProjection(srs.ExportToWkt())
-    vector = ogr.GetDriverByName('Memory').CreateDataSource('')
-    layer = vector.CreateLayer('aoi', srs, ogr.wkbUnknown)
-    feat = ogr.Feature(layer.GetLayerDefn())
-    feat.SetGeometry(ogr.CreateGeometryFromWkb(bytes(aoi.asWkb())))
-    layer.CreateFeature(feat)
-    if gdal.RasterizeLayer(mask_ds, [1], layer, burn_values=[1]) != 0:
-        raise ValueError('Nie udało się przygotować maski obszaru')
-    mask = mask_ds.ReadAsArray().astype(bool)
+    if mask is None:
+        mask = raster_aoi_mask(tile, aoi)
     requested = int(np.count_nonzero(mask))
     gap_mask = (missing & mask).astype(np.uint8)
     missing_count = int(np.count_nonzero(gap_mask))
@@ -238,6 +245,9 @@ def save_geotiff(source, target, tile):
                             outputSRS='EPSG:2180', creationOptions=['COMPRESS=DEFLATE', 'PREDICTOR=3', 'TILED=YES', 'NUM_THREADS=1'])
     if output is None:
         raise ValueError('Konwersja ASCII Grid → GeoTIFF nie powiodła się')
+    # WCS ASCII may differ from the validated request grid by sub-millimetre roundoff.
+    # Store the exact requested grid so adjacent tiles have no artificial numerical gaps.
+    output.SetGeoTransform((tile.bbox[0], tile.resolution, 0, tile.bbox[3], 0, -tile.resolution))
     output.SetMetadataItem('REQUEST_SIGNATURE', tile.signature)
     output.SetMetadataItem('SOURCE_URL', tile.url)
     output.SetMetadataItem('COVERAGE', tile.coverage)

@@ -2,10 +2,10 @@
 name=NMT i NMTP ściągacz
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
-version=1.1.0
+version=1.2.0
 author=Projekt lokalny
-description=Pobiera NMT i NMPT dla bufora warstwy. Zadania w tle, statystyki, wznowienie i raporty luk.
-about=Pobieranie numerycznych danych WCS GUGiK, EPSG:2180, skompresowane GeoTIFF Float32. Oddzielne foldery NMT/NMPT, raporty JSON/Markdown/GeoJSON.
+description=Pobieranie NMT i NMPT oraz widoczność turbin z dachami i drzewami NMPT. Zadania w tle, statystyki i raporty.
+about=Numeryczne WCS GUGiK, EPSG:2180, GeoTIFF Float32. Analiza linii widzenia z lokalnym lub pełnym NMPT, wyniki GeoPackage/CSV/JSON/Markdown. Oddzielne foldery i indeksy kafli NMT/NMPT.
 category=Raster
 icon=icon.svg
 experimental=True

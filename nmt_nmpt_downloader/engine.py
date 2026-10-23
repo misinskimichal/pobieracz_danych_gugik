@@ -17,7 +17,7 @@ from .catalog import HEIGHTS, Variant, choose_variants, endpoints
 
 from .core import (
     VERSION, SOURCES, STATUS_LABELS, NATIVE_RESOLUTION, Canceled, ServiceError, atomic_json, buffer_index, build_buffers,
-    check_cancel, feature_geojson, inspect_raster, parse_description, plan_tiles,
+    check_cancel, feature_geojson, inspect_raster, parse_description, plan_tiles, raster_aoi_mask,
     save_gap_mask, save_geotiff, tile_aoi, xml_root,
 )
 
@@ -200,8 +200,12 @@ class Engine:
         try:
             check_cancel(self.cancel_event)
             self._progress(tile, phase='Sprawdzanie pliku')
+            mask = raster_aoi_mask(tile, aoi)
+            if not mask.any():
+                result.update(file=None, requested_cells=0, nodata_cells=0, coverage_percent=None)
+                return self._finalize_tile(result, mask.astype('uint8'), tile)
             if target.exists():
-                stats, gap_mask = inspect_raster(target, tile, aoi, signature_required=True)
+                stats, gap_mask = inspect_raster(target, tile, aoi, signature_required=True, mask=mask)
                 if self.options['reuse']:
                     result.update(stats, reused=True, output_bytes=target.stat().st_size)
                     return self._finalize_tile(result, gap_mask, tile)
@@ -242,13 +246,13 @@ class Engine:
                         if not bytes(prefix).lstrip().lower().startswith(b'ncols'):
                             raise ServiceError('Odpowiedź nie jest numerycznym ASCII Grid')
                     self._progress(tile, phase='Walidacja i kompresja')
-                    stats, gap_mask = inspect_raster(temporary, tile, aoi)
+                    stats, gap_mask = inspect_raster(temporary, tile, aoi, mask=mask)
                     result.update(stats)
                     check_cancel(self.cancel_event)
                     if stats['requested_cells'] and stats['nodata_cells'] < stats['requested_cells']:
                         save_geotiff(temporary, converted, tile)
                         # Verify pixels, signature and georeferencing before publishing a complete file.
-                        inspect_raster(converted, tile, aoi, signature_required=True)
+                        inspect_raster(converted, tile, aoi, signature_required=True, mask=mask)
                         converted.replace(target)
                         result['output_bytes'] = target.stat().st_size
                     else:

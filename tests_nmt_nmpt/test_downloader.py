@@ -286,6 +286,9 @@ class DownloaderTests(unittest.TestCase):
             def mainWindow(self): return window
             def activeLayer(self): return layer
         dialog = DownloadDialog(Iface())
+        self.assertFalse(dialog.nmt.isChecked())
+        self.assertTrue(dialog.nmpt.isChecked())
+        dialog.nmt.setChecked(True)
         dialog.layer.setLayer(layer)
         dialog.nmt_folder.edit.setText(str(self.root / 'same'))
         dialog.nmpt_folder.edit.setText(str(self.root / 'same'))
@@ -471,6 +474,7 @@ class DownloaderTests(unittest.TestCase):
         dialog = DownloadDialog(Iface(), manager)
         original_radius = dialog.radius.value()
         try:
+            dialog.nmt.setChecked(True)
             dialog.radius.setValue(0)
             dialog.nmt_folder.edit.setText(str(self.root / 'NMT'))
             dialog.nmpt_folder.edit.setText(str(self.root / 'NMPT'))
@@ -494,6 +498,329 @@ class DownloaderTests(unittest.TestCase):
             QgsProject.instance().clear()
             dialog.deleteLater()
             canvas.deleteLater()
+
+    def test_visibility_automatic_native_download_and_cache_reuse(self):
+        from nmt_nmpt_downloader.visibility import VisibilityEngine
+        Handler.resolutions = {'DSM_PL-EVRF2007-NH': 0.5, 'DSM_PL-KRON86-NH': 0.5, 'DTM_PL-EVRF2007-NH': 5}
+
+        def point(x, y):
+            layer = QgsVectorLayer('Point?crs=EPSG:2180', 'test', 'memory')
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromWkt(f'POINT ({x} {y})'))
+            layer.dataProvider().addFeatures([feature])
+            return layer
+
+        turbine, receiver = point(102.25, 100.25), point(100.25, 100.25)
+        config = dict(radius=20000, eye=1.7, hub=20, diameter=0, target='hub', use_nmpt=True,
+                      detail_mode='full', detail_radius=1000, detail_centers='both',
+                      height='PL-EVRF2007-NH', curvature=False, auto_download=True, workers=2, pixels=8,
+                      folders={r: str(self.root / r) for r in ('NMT', 'NMPT')}, report_folder=str(self.root / 'reports'))
+
+        def run():
+            return VisibilityEngine(QgsVectorLayerFeatureSource(turbine), turbine.crs(),
+                                    QgsVectorLayerFeatureSource(receiver), receiver.crs(), CONTEXT, config).run()
+
+        first = run()
+        self.assertEqual(first['state'], 'completed', first)
+        self.assertEqual(first['counts'], {'visible_modeled': 1})
+        self.assertTrue(all(r['resolution'] == 0.5 for r in first['rasters']['NMPT']))
+        self.assertTrue(all(r['resolution'] == 5 for r in first['rasters']['NMT']))
+        self.assertEqual(len(first['downloads']), 2)
+        previous = Handler.counts.copy()
+        second = run()
+        self.assertEqual(second['counts'], {'visible_modeled': 1})
+        self.assertEqual(Handler.counts, previous, 'Drugi przebieg nie powinien pobierać ponownie poprawnych kafli')
+
+
+class VisibilityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.event = threading.Event()
+        self.config = dict(radius=20000, eye=1.7, hub=20, diameter=0, target='hub',
+                           detail_mode='full', detail_centers='both', detail_radius=5,
+                           use_nmpt=True, height='PL-EVRF2007-NH', curvature=False,
+                           refraction=1 / 7, tolerance=0.25, auto_download=False,
+                           folders={r: str(self.root / r) for r in ('NMT', 'NMPT')},
+                           report_folder=str(self.root / 'reports'))
+        self.receiver = dict(id='r1', x=1.25, y=2.25, representative=False)
+        self.turbine = dict(id='t1', x=39.25, y=2.25, hub=20, diameter=0, representative=False)
+        self.raster('NMT', np.zeros((4, 40)), 1)
+        self.raster('NMPT', np.zeros((8, 80)), 0.5)
+        self.stores = []
+
+    def tearDown(self):
+        for store in self.stores:
+            store.close()
+        QgsProject.instance().clear()
+        self.tmp.cleanup()
+
+    def raster(self, resource, values, resolution, height='PL-EVRF2007-NH', name='test.tif', origin=(0, 4)):
+        from osgeo import osr
+        folder = self.root / resource
+        folder.mkdir(exist_ok=True)
+        path = folder / name
+        ds = gdal.GetDriverByName('GTiff').Create(str(path), values.shape[1], values.shape[0], 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((origin[0], resolution, 0, origin[1], 0, -resolution))
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(2180)
+        ds.SetProjection(srs.ExportToWkt())
+        ds.SetMetadataItem('RESOURCE', resource)
+        ds.SetMetadataItem('HEIGHT_SYSTEM', height)
+        band = ds.GetRasterBand(1)
+        band.SetNoDataValue(-9999)
+        band.WriteArray(values)
+        ds = None
+        return path
+
+    def store(self, resource):
+        from nmt_nmpt_downloader.visibility import RasterStore
+        store = RasterStore(self.config['folders'][resource], resource, self.config['height'], self.event)
+        self.stores.append(store)
+        return store
+
+    def analyze(self):
+        from nmt_nmpt_downloader.visibility import analyze_pair
+        return analyze_pair(self.receiver, self.turbine, self.store('NMT'), self.store('NMPT'), self.config, self.event)
+
+    def test_nmpt_tree_half_meter_wide_blocks_with_flat_terrain(self):
+        values = np.zeros((8, 80))
+        values[:, 20] = 15
+        self.raster('NMPT', values, 0.5)
+        result = self.analyze()
+        self.assertEqual(result['status'], 'blocked_detail')
+        self.assertAlmostEqual(result['detail_valid_percent'], 100)
+        self.assertTrue(8 < result['blocker_distance_m'] < 10)
+        self.assertLess(result['clearance_m'], -1)
+
+    def test_local_detail_does_not_confirm_unchecked_middle(self):
+        values = np.zeros((8, 80))
+        values[:, 20] = 15  # Outside the two 5 m detail intervals.
+        self.raster('NMPT', values, 0.5)
+        self.config.update(detail_mode='local', detail_radius=5)
+        result = self.analyze()
+        self.assertEqual(result['status'], 'potential_visible_partial_detail')
+        self.assertAlmostEqual(result['detail_required_percent'], 100 * 10 / 38)
+        self.config['detail_mode'] = 'full'
+        self.assertEqual(self.analyze()['status'], 'blocked_detail')
+
+    def test_local_detail_near_observer_detects_tree(self):
+        values = np.zeros((8, 80))
+        values[:, 5] = 10
+        self.raster('NMPT', values, 0.5)
+        self.config.update(detail_mode='local', detail_centers='receivers')
+        self.assertEqual(self.analyze()['status'], 'blocked_detail')
+
+    def test_full_valid_model_and_terrain_only_have_distinct_statuses(self):
+        self.assertEqual(self.analyze()['status'], 'visible_modeled')
+        self.config['use_nmpt'] = False
+        result = self.analyze()
+        self.assertEqual(result['status'], 'visible_terrain_only')
+        self.assertEqual(result['detail_required_percent'], 0)
+
+    def test_top_of_rotor_and_hub_are_different_targets(self):
+        values = np.zeros((8, 80))
+        values[:, 40] = 15
+        self.raster('NMPT', values, 0.5)
+        self.turbine['diameter'] = 80
+        self.assertEqual(self.analyze()['status'], 'blocked_detail')
+        self.config['target'] = 'tip'
+        self.assertEqual(self.analyze()['status'], 'visible_modeled')
+
+    def test_missing_nmpt_is_unknown_not_zero_and_local_omission_is_different(self):
+        values = np.zeros((8, 80))
+        values[:, 20:25] = -9999
+        self.raster('NMPT', values, 0.5)
+        result = self.analyze()
+        self.assertEqual(result['status'], 'unknown_required_data')
+        self.assertLess(result['detail_valid_percent'], 100)
+        self.config.update(detail_mode='local')
+        self.assertEqual(self.analyze()['status'], 'potential_visible_partial_detail')
+
+    def test_known_terrain_block_can_prove_occlusion_despite_nmpt_gap(self):
+        values = np.zeros((4, 40))
+        values[:, 10] = 40
+        self.raster('NMT', values, 1)
+        self.raster('NMPT', np.full((8, 80), -9999), 0.5)
+        result = self.analyze()
+        self.assertEqual(result['status'], 'blocked_terrain')
+        self.assertTrue(result['missing_elsewhere'])
+
+    def test_mixed_vertical_datums_are_rejected(self):
+        self.raster('NMPT', np.zeros((8, 80)), 0.5, height='PL-KRON86-NH')
+        detail = self.store('NMPT')
+        self.assertEqual(len(detail.records), 0)
+        self.assertIn('PL-KRON86-NH', detail.errors[0]['reason'])
+        self.assertEqual(self.analyze()['status'], 'unknown_required_data')
+
+    def test_eye_inside_roof_is_uncertain_and_ground_is_nmt(self):
+        values = np.zeros((8, 80))
+        values[:, 2] = 10
+        self.raster('NMPT', values, 0.5)
+        result = self.analyze()
+        self.assertEqual(result['status'], 'uncertain_geometry')
+        self.assertAlmostEqual(result['eye_z_m'], 1.7)
+
+    def test_no_ground_at_endpoint_is_unknown_even_with_dsm(self):
+        self.raster('NMT', np.full((4, 40), -9999), 1)
+        self.assertEqual(self.analyze()['status'], 'unknown_required_data')
+
+    def test_outside_radius_does_not_require_dem(self):
+        self.config['radius'] = 10
+        self.assertEqual(self.analyze()['status'], 'outside_analysis')
+
+    def test_window_cache_bound_and_finer_valid_overlap(self):
+        coarse = np.full((4, 40), 3)
+        self.raster('NMPT', coarse, 1, name='coarse.tif')
+        store = self.store('NMPT')
+        values, _ = store.sample(np.array([1.25, 10.25]), np.array([2.25, 2.25]))
+        np.testing.assert_array_equal(values, [0, 0])
+        self.assertLessEqual(len(store.blocks), 32)
+
+    def test_ray_on_grid_edge_checks_both_adjacent_columns(self):
+        self.raster('NMT', np.zeros((40, 4)), 1, origin=(0, 40))
+        detail = np.zeros((80, 8))
+        detail[50, 3] = 20  # Left of x=2; a floor(x/res) sampler alone would miss it.
+        self.raster('NMPT', detail, 0.5, origin=(0, 40))
+        self.receiver.update(x=2, y=1.25)
+        self.turbine.update(x=2, y=39.25)
+        self.assertEqual(self.analyze()['status'], 'blocked_detail')
+
+    def test_block_cache_evicts_when_scanning_larger_local_raster(self):
+        self.raster('NMPT', np.zeros((1800, 1800)), 0.5, origin=(0, 900))
+        store = self.store('NMPT')
+        x, y = np.meshgrid(np.arange(1, 1800, 256) * 0.5, 900 - np.arange(1, 1800, 256) * 0.5)
+        values, _ = store.sample(x.ravel(), y.ravel())
+        self.assertTrue(np.isfinite(values).all())
+        self.assertEqual(len(store.blocks), 32)
+        self.assertLessEqual(len(store.datasets), 8)
+
+    def test_curvature_can_hide_distant_target_on_flat_models(self):
+        self.raster('NMT', np.zeros((1, 200)), 100, origin=(0, 100))
+        self.raster('NMPT', np.zeros((1, 200)), 100, origin=(0, 100))
+        self.receiver.update(x=0.5, y=50)
+        self.turbine.update(x=19999.5, y=50, hub=1.7)
+        self.config['eye'] = 1.7
+        self.assertEqual(self.analyze()['status'], 'visible_modeled')
+        self.config['curvature'] = True
+        self.assertEqual(self.analyze()['status'], 'blocked_terrain')
+
+    def point_layer(self, point, name):
+        from qgis.core import QgsPointXY
+        layer = QgsVectorLayer('Point?crs=EPSG:2180', name, 'memory')
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(point['x'], point['y'])))
+        layer.dataProvider().addFeatures([feature])
+        return layer
+
+    def engine(self, **kwargs):
+        from nmt_nmpt_downloader.visibility import VisibilityEngine
+        turbines = self.point_layer(self.turbine, 'turbiny')
+        receivers = self.point_layer(self.receiver, 'obserwatorzy')
+        return VisibilityEngine(QgsVectorLayerFeatureSource(turbines), turbines.crs(),
+                                QgsVectorLayerFeatureSource(receivers), receivers.crs(), CONTEXT,
+                                dict(self.config, **kwargs))
+
+    def test_task_engine_writes_gpkg_csv_json_md_and_polygon_point(self):
+        from nmt_nmpt_downloader.visibility import read_points
+        from nmt_nmpt_downloader.visibility_dialog import add_results
+        polygon = layer_for([(0, 0, 3, 3)])
+        points, issues = read_points(QgsVectorLayerFeatureSource(polygon), polygon.crs(), CONTEXT,
+                                     'receivers', self.config, self.event)
+        self.assertEqual(len(points), 1)
+        self.assertTrue(points[0]['representative'])
+        self.assertFalse(issues)
+        result = self.engine().run()
+        self.assertEqual(result['state'], 'completed', result)
+        self.assertEqual(result['counts'], {'visible_modeled': 1})
+        folder = Path(result['report_dir'])
+        self.assertTrue(all((folder / p).is_file() for p in ['widocznosc.gpkg', 'wyniki.csv', 'report.json', 'report.md', 'events.jsonl']))
+        self.assertEqual(json.loads((folder / 'report.json').read_text())['counts'], result['counts'])
+        lines = QgsVectorLayer(result['gpkg'] + '|layername=linie_widzenia', 'test', 'ogr')
+        self.assertTrue(lines.isValid())
+        self.assertEqual(lines.featureCount(), 1)
+        self.assertEqual(next(lines.getFeatures())['status'], 'visible_modeled')
+        add_results(result)
+        add_results(result)
+        self.assertEqual(len(QgsProject.instance().mapLayers()), 3)
+
+    def test_cancel_retains_report_without_faking_complete_results(self):
+        engine = self.engine()
+        engine.cancel_event.set()
+        result = engine.run()
+        self.assertEqual(result['state'], 'canceled')
+        self.assertFalse(result['results'])
+        self.assertTrue((Path(result['report_dir']) / 'report.json').is_file())
+
+    def test_error_on_one_line_does_not_stop_other_pairs(self):
+        from nmt_nmpt_downloader.visibility import VisibilityEngine, analyze_pair
+        turbines = self.point_layer(self.turbine, 'turbiny')
+        receivers = self.point_layer(self.receiver, 'obserwatorzy')
+        feature = next(receivers.getFeatures())
+        receivers.dataProvider().addFeatures([feature])
+        engine = VisibilityEngine(QgsVectorLayerFeatureSource(turbines), turbines.crs(),
+                                  QgsVectorLayerFeatureSource(receivers), receivers.crs(), CONTEXT, self.config)
+        calls = []
+
+        def fail_first(*args):
+            calls.append(1)
+            if len(calls) == 1:
+                raise ValueError('kontrolowany błąd linii')
+            return analyze_pair(*args)
+
+        with patch('nmt_nmpt_downloader.visibility.analyze_pair', side_effect=fail_first):
+            report = engine.run()
+        self.assertEqual(report['state'], 'completed_with_gaps')
+        self.assertEqual(report['counts'], {'unknown_required_data': 1, 'visible_modeled': 1})
+        self.assertIn('kontrolowany błąd', report['results'][0]['reason'])
+
+    def test_old_plugin_roundoff_is_normalized(self):
+        path = self.root / 'NMPT' / 'test.tif'
+        ds = gdal.Open(str(path), gdal.GA_Update)
+        ds.SetGeoTransform((0.00000015, 0.500000000016, 0, 3.9999993, 0, -0.500000000016))
+        ds.SetMetadataItem('REQUEST_SIGNATURE', 'old-plugin-request')
+        ds.SetMetadataItem('NATIVE_RESOLUTION', '0.5')
+        ds = None
+        store = self.store('NMPT')
+        self.assertEqual(store.records[0]['gt'], (0, 0.5, 0, 4, 0, -0.5))
+        self.assertNotEqual(store.records[0]['source_gt'], store.records[0]['gt'])
+        self.assertEqual(self.analyze()['status'], 'visible_modeled')
+
+    def test_gui_async_nmpt_default_and_add_results(self):
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from nmt_nmpt_downloader.visibility_dialog import VisibilityDialog
+        turbines = self.point_layer(self.turbine, 'turbiny')
+        receivers = self.point_layer(self.receiver, 'obserwatorzy')
+        project = QgsProject.instance()
+        project.addMapLayer(turbines)
+        project.addMapLayer(receivers)
+        window = QMainWindow()
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return receivers
+
+        dialog = VisibilityDialog(Iface())
+        try:
+            self.assertTrue(dialog.use_nmpt.isChecked())
+            dialog.turbines.setLayer(turbines)
+            dialog.receivers.setLayer(receivers)
+            dialog.detail_mode.setCurrentIndex(1)
+            dialog.hub.setValue(20)
+            dialog.diameter.setValue(0)
+            dialog.auto_download.setChecked(False)
+            dialog.nmt_folder.edit.setText(self.config['folders']['NMT'])
+            dialog.nmpt_folder.edit.setText(self.config['folders']['NMPT'])
+            dialog.report_folder.edit.setText(self.config['report_folder'])
+            with patch('nmt_nmpt_downloader.visibility_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.visibility_dialog.QMessageBox.warning'):
+                dialog.start()
+                DownloaderTests.wait_until(self, lambda: dialog.task is None and dialog.last_report is not None)
+            self.assertEqual(dialog.last_report['state'], 'completed')
+            self.assertTrue(dialog.map_button.isEnabled())
+            dialog.map_button.click()
+            self.assertEqual(len(project.mapLayers()), 5)
+        finally:
+            dialog.deleteLater()
 
 
 if __name__ == '__main__':
