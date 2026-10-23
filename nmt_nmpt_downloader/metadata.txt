@@ -2,9 +2,9 @@
 name=NMT i NMTP ściągacz
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
-version=2.0.0
+version=2.1.0
 author=Projekt lokalny
-description=Atlas widoczności całych kół NMT/NMPT, ekspozycja dróg i zabudowy, mapy PDF/PNG/HTML oraz pobieranie danych GUGiK.
+description=Atlas NMT/NMPT, promienie widoczności, profile terenu, obracana scena 3D i eksport map w tle.
 about=Jeden formularz pobierania i analizy. Osobne promienie i kroki NMT/NMPT. Obserwatorzy opcjonalni. Mapy liczby widocznych turbin, trzech wysokości wirnika i braków danych, GeoTIFF/GeoPackage/CSV/JSON, atlas PDF/PNG/HTML.
 category=Raster
 icon=icon.svg

@@ -99,7 +99,7 @@ def warp_grid(path, source, grid, algorithm, callback):
 class ModelSources:
     """Virtual data mosaics and binary quality mosaics; no full-area array in memory."""
 
-    def __init__(self, store, folder, geometries, event, log):
+    def __init__(self, store, folder, geometries, event, log, notify=lambda _: None):
         self.store, self.folder, self.event = store, folder, event
         folder.mkdir(parents=True, exist_ok=True)
         numbers = set()
@@ -109,6 +109,7 @@ class ModelSources:
         data_paths, valid_paths = [], []
         for number, record in enumerate(self.records):
             check_cancel(event)
+            notify(f'Przygotowanie masek: plik {number + 1}/{len(self.records)}')
             path = record['path']
             source = gdal.Open(path, gdal.GA_ReadOnly)
             if source is None:
@@ -282,6 +283,7 @@ class Product:
     def finish(self, event, callback):
         counts = Counter()
         for y in range(0, self.grid.height, 256):
+            callback(y / self.grid.height, '', None)
             for x in range(0, self.grid.width, 256):
                 check_cancel(event)
                 width, height = min(256, self.grid.width - x), min(256, self.grid.height - y)
@@ -345,6 +347,7 @@ class AtlasEngine:
                 pass
 
     def stats(self, stage, done=0, total=0, **extras):
+        self.current_stage = stage
         fraction = extras.get('fraction_done', done / total if total else 0)
         elapsed = time.monotonic() - self.phase_started if self.phase_started else 0
         self.notify(dict(kind='atlas', stage=stage, done=done, total=total,
@@ -353,6 +356,11 @@ class AtlasEngine:
                          transfer_bytes=sum(d['transfer_bytes'] for d in self.report['downloads']), **extras))
 
     def callback(self, fraction, message, data):
+        current = time.monotonic()
+        if current - getattr(self, 'last_callback', 0) >= 0.5:
+            self.last_callback = current
+            self.stats(getattr(self, 'current_stage', 'Przygotowanie danych'), 0, 0,
+                       operation_percent=round(fraction * 100))
         return 0 if self.cancel_event.is_set() else 1
 
     def checkpoint(self):
@@ -390,6 +398,7 @@ class AtlasEngine:
 
     def run(self):
         models, stores, products = [], [], []
+        rays = None
         try:
             self.report_dir = Path(self.options['report_folder']) / ('atlas_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:8])
             self.report_dir.mkdir(parents=True)
@@ -411,6 +420,8 @@ class AtlasEngine:
                 raise ValueError('Brak turbin o poprawnej wysokości piasty i średnicy wirnika')
             if len(turbines) > 1000:
                 raise ValueError('Wybierz maksymalnie 1000 turbin na zadanie')
+            if self.options.get('details', True) and not 1 <= int(self.options.get('view_turbine', 1)) <= len(turbines):
+                raise ValueError('Numer turbiny do przekroju / 3D jest poza analizowanym zestawem')
             self.report.update(turbines=turbines, input_issues=issues)
             for spec in self.options['models']:
                 if not 0.5 <= spec['resolution'] <= 1000 or not 1 <= spec['radius'] <= 200000:
@@ -426,6 +437,12 @@ class AtlasEngine:
                     raise ValueError(f'{spec["resource"]}: turbiny są zbyt rozproszone dla wybranego kroku. Zwiększ krok lub wybierz podzbiór.')
             if self.options.get('auto_download', True):
                 self.download(turbines)
+            self.report['details'], self.report['visualization_issues'] = [], []
+            if self.options.get('rays', True):
+                from .atlas_details import RayWriter
+                rays = RayWriter(self.report_dir, self.options.get('ray_spacing', 10), self.cancel_event)
+                self.report['rays_gpkg'] = str(rays.path)
+                self.report['ray_summary'] = rays.summaries
             for spec in self.options['models']:
                 check_cancel(self.cancel_event)
                 resource = spec['resource']
@@ -435,7 +452,8 @@ class AtlasEngine:
                 for kind in (['NMT'] if resource == 'NMT' else ['NMT', 'NMPT']):
                     store = RasterStore(self.options['folders'][kind], kind, spec['height'], self.cancel_event)
                     stores.append(store)
-                    model = ModelSources(store, work / (resource + '_' + kind), geometries, self.cancel_event, self.event)
+                    model = ModelSources(store, work / (resource + '_' + kind), geometries, self.cancel_event, self.event,
+                                         lambda text: self.stats(resource + '/' + kind + ': ' + text))
                     models.append(model)
                     source_models[kind] = model
                     self.report['raster_errors'].extend(store.errors)
@@ -443,6 +461,8 @@ class AtlasEngine:
                 product = Product(self.report_dir, spec, turbines)
                 products.append(product)
                 self.report['products'].append(product.as_dict())
+                if rays:
+                    rays.add_model(resource)
                 self.event(f'{resource}: rozpoczęto obliczenia {len(turbines)} kół, promień {spec["radius"]:g} m, krok {spec["resolution"]:g} m')
                 self.phase_started = time.monotonic()
                 for number, turbine in enumerate(turbines):
@@ -476,6 +496,21 @@ class AtlasEngine:
                         empty = np.zeros(inside.shape, bool)
                         result = (inside, [empty, empty, empty], [inside, inside, inside], inside.astype(np.uint8) * 3)
                     product.merge(grid, *result)
+                    if rays:
+                        self.stats(stage + ' — zapisywanie promieni widoczności', number, len(turbines))
+                        rays.write(grid, turbine, spec['radius'], result)
+                    if self.options.get('details', True) and number == int(self.options.get('view_turbine', 1)) - 1:
+                        from .atlas_details import write_details
+                        self.stats(stage + ' — przekrój i siatka podglądu 3D', number, len(turbines))
+                        try:
+                            self.report['details'].append(write_details(self.report_dir, spec, grid, turbine, terrain,
+                                                                        terrain_valid, surface, surface_valid, float(height[0]),
+                                                                        self.options, self.cancel_event))
+                        except Canceled:
+                            raise
+                        except Exception as exc:
+                            self.report['visualization_issues'].append(dict(model=resource, reason=str(exc)))
+                            self.event('Wynik analizy zachowano; problem podglądu: ' + str(exc))
                     product.turbines.append(dict(id=turbine['id'], ground_z_m=float(height[0]) if np.isfinite(height[0]) else None))
                     self.report['products'][-1] = product.as_dict()
                     self.checkpoint()
@@ -486,7 +521,9 @@ class AtlasEngine:
                 shade_path = product.folder / 'hillshade.tif'
                 ground_vrt = source_models['NMT'].data
                 if ground_vrt is not None:
-                    full = warp_grid(work / 'hill_terrain.tif', ground_vrt, product.grid, 'bilinear', self.callback)
+                    self.stats(resource + ': zapis kolorowego modelu wysokości')
+                    terrain_path = product.folder / 'terrain.tif'
+                    full = warp_grid(terrain_path, ground_vrt, product.grid, 'bilinear', self.callback)
                     shade = gdal.DEMProcessing(str(shade_path), full, 'hillshade', format='GTiff',
                                                creationOptions=CREATE, computeEdges=True, callback=self.callback)
                     if shade is None:
@@ -494,18 +531,52 @@ class AtlasEngine:
                     full, shade = None, None
                     ground_vrt = None
                     finished['paths']['hillshade'] = str(shade_path)
+                    finished['paths']['elevation'] = str(terrain_path)
+                    if resource == 'NMPT' and source_models['NMPT'].data is not None:
+                        elevation_path = product.folder / 'elevation.tif'
+                        elevation = warp_grid(elevation_path, source_models['NMPT'].data, product.grid, 'max', self.callback)
+                        elevation.FlushCache()
+                        elevation = None
+                        finished['paths']['elevation'] = str(elevation_path)
+                    # Cache display statistics and pyramids in the worker, before QgsRasterLayer opens on the GUI thread.
+                    scope = gdal.Open(finished['paths']['scope'])
+                    for name in ['elevation', 'hillshade']:
+                        self.stats(resource + ': piramidy i statystyki prezentacji — ' + name)
+                        dataset = gdal.Open(finished['paths'][name], gdal.GA_Update)
+                        band = dataset.GetRasterBand(1)
+                        has_values = False
+                        for y in range(0, product.grid.height, 256):
+                            check_cancel(self.cancel_event)
+                            for x in range(0, product.grid.width, 256):
+                                w, h = min(256, product.grid.width - x), min(256, product.grid.height - y)
+                                values = band.ReadAsArray(x, y, w, h)
+                                values[scope.GetRasterBand(1).ReadAsArray(x, y, w, h) == NOCOUNT] = band.GetNoDataValue()
+                                has_values |= bool(np.any(np.isfinite(values) & (values != band.GetNoDataValue())))
+                                band.WriteArray(values, x, y)
+                            self.callback(y / product.grid.height, '', None)
+                        levels = [v for v in [2, 4, 8, 16, 32, 64] if min(dataset.RasterXSize, dataset.RasterYSize) // v >= 32]
+                        if levels:
+                            dataset.BuildOverviews('AVERAGE', levels, callback=self.callback)
+                        if has_values:
+                            band.GetStatistics(True, True)
+                        else:
+                            band.SetStatistics(0, 0, 0, 0)
+                        band, dataset = None, None
+                    scope = None
                 self.report['products'][-1] = finished
                 self.checkpoint()
                 for model in source_models.values():
                     model.close()
             from .atlas_context import write_context
+            if rays:
+                rays.close()
             self.stats('Drogi, zabudowa i opcjonalni obserwatorzy — ocena ekspozycji')
             self.report['gpkg'], context_stats = write_context(self.report_dir, self.report['products'], turbines,
                                                                self.contexts, self.context, self.cancel_event)
             self.report['context_summary'] = context_stats
             self.report['state'] = 'completed_with_gaps' if self.report['input_issues'] or any(
                 p['state'] != 'completed' for p in self.report['products']) or any(
-                item.get('truncated') for item in context_stats) else 'completed'
+                item.get('truncated') for item in context_stats + self.report.get('ray_summary', [])) or self.report['visualization_issues'] else 'completed'
         except Canceled:
             self.report['state'] = 'canceled'
         except Exception as exc:
@@ -515,6 +586,8 @@ class AtlasEngine:
                 self.report.update(state='failed', fatal_error=str(exc))
                 self.event('Błąd atlasu: ' + str(exc))
         finally:
+            if rays:
+                rays.close()
             for product in products:
                 product.close()
             for model in models:
@@ -561,7 +634,18 @@ class AtlasEngine:
                   '- Trzy wysokości wirnika są trzema punktami. Nie wykonano siatkowego ray tracingu ani animacji wirnika.',
                   '- Krzywizna i refrakcja: współczynnik 6/7, jeśli włączone. Algorytm GDAL GVM_Max jest konserwatywną aproksymacją rastrową.',
                   '- Drogi i poligony są oceniane na próbkach; zabudowa/poligony po zewnętrznym obrysie, nie pod dachem.', '',
+                  '- widoczne_pct: procent próbek z potwierdzoną widocznością co najmniej jednej turbiny (80% = np. 8 z 10 próbek). To nie procent powierzchni wirnika ani działki.',
+                  '- niepewne_pct: procent próbek z niepewną trasą, brakiem danych lub okiem pod powierzchnią. Kategorie mogą się nakładać z potwierdzoną widocznością innych turbin.',
+                  '- promienie.gpkg: odcinki dla konkretnej turbiny; piasta/koniec/dolny: 0 zasłonięta, 1 widoczna, 2 niepewna, 3 oko pod powierzchnią. Azymut od północy siatki EPSG:2180. Promienie są ilustracją próbek rastrowych, nie ciągłym pomiarem co do centymetra.',
+                  '- elevation.tif / terrain.tif: barwy wysokości, zielony nisko, czerwony wysoko. Nie mylić z liczbą turbin.',
+                  '- profil_*.svg i scena_3d_*.html: wybrana turbina i kierunek. Podgląd 3D ma rzadszą siatkę; nie zmienia kroku analizy. Profil czyta model obliczeniowy i uwzględnia opcjonalną krzywiznę.', '',
                   '## Dane i problemy', '']
+        for item in self.report.get('details', []):
+            lines.append(f'- {item["model"]}: [przekrój]({Path(item["profile"]).name}), [scena 3D]({Path(item["scene"]).name}); turbina {item["turbine"]}, azymut {item["azimuth"]:g}°.')
+        for item in self.report.get('ray_summary', []):
+            lines.append(f'- Promienie {item["model"]}: {item["features"]} odcinków; krok {item["spacing_degrees"]:g}°; limit osiągnięty: {item["truncated"]}.')
+        for item in self.report.get('visualization_issues', []):
+            lines.append('- Problem podglądu: ' + str(item))
         if self.report.get('fatal_error'):
             lines.append(self.report['fatal_error'])
         for issue in self.report['input_issues'] + self.report['raster_errors']:

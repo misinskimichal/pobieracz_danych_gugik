@@ -491,6 +491,8 @@ class TerrainPlugin:
                 self.visibility_dialog.task.cancel()
             self.visibility_dialog.hide()
         if self.dialog:
+            if getattr(self.dialog, 'export_job', None):
+                self.dialog.export_job.cancel()
             if self.dialog.catalog_task:
                 self.dialog.catalog_task.cancel()
             if self.dialog.task:

@@ -1,12 +1,14 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.0.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.1.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
 **Skróty:** NMT = model samego terenu, NMPT = model górnej powierzchni terenu, roślinności i zabudowy. Pisownia „NMTP” pozostaje częścią zamówionej nazwy produktu; techniczny skrót zasobu to „NMPT”.
 
 Dokument opisuje działającą implementację i osobno proponowane rozszerzenia. **Wersja 2.0.0 dodaje atlas pełnych kół NMT/NMPT w jednym formularzu, z opcjonalnymi obserwatorami, drogami i zabudową** — patrz suplement G i [instrukcja 2.0.0](Instrukcja_ATLAS_2.0.0.md). Punktowy moduł z wydania 1.2.0 opisany w F jest etapem historycznym. Suplement E zachowuje szerszy plan, w tym przyszłe pełne 3D. Pozostałe przykłady biznesowe i prototypy nie stają się automatycznie funkcjami wtyczki.
+
+**Wydanie 2.1.0:** promienie widoczności konkretnych turbin, barwna mapa wysokości, przekrój i obracana scena powierzchni 3D oraz asynchroniczne renderowanie map — [pełna instrukcja i opis implementacji 2.1.0](Instrukcja_ATLAS_2.1.0.md). Prezentacja 3D powierzchni nie oznacza pełnego ray tracingu brył.
 
 ## Spis treści
 
@@ -1688,3 +1690,17 @@ To mapa rastrowa 2,5D. Pełna geometria siatek 3D, prześwity pod koronami, sezo
 - [PIG-PIB Geologia](https://geologia.pgi.gov.pl/), [ISOK Hydroportal](https://isok.gov.pl/hydroportal.html), [Bank Danych o Lasach](https://www.bdl.lasy.gov.pl/portal/), [PANSA AIS](https://ais.pansa.pl/).
 
 Repozytoria bibliotek wskazano przy każdym zastosowaniu. Nazwy i adresy repozytoriów GitHub sprawdzono podczas przygotowania dokumentacji. Repozytorium FLORIS przekierowuje obecnie z NREL do NatLabRockies, a pysheds z mdbartos do organizacji pysheds; w dokumencie użyto adresów docelowych. Dostępność danych zależy od produktu, regionu, okresu i warunków dostawcy — nie jest weryfikowana samym działającym odnośnikiem do portalu.
+
+
+## Suplement H — wdrożone w 2.1.0: promienie, przekrój i podgląd 3D
+
+[Instrukcja 2.1.0](Instrukcja_ATLAS_2.1.0.md) opisuje konfigurację, znaczenie procentów, formaty danych, budowę kodu i uzasadnienie rozwiązań. Użytkownik wybiera numer turbiny i kierunek od niej do obserwatora na brzegu koła. Obserwatorzy nie stają się wymagani. Każdy model zachowuje niezależny promień i krok.
+
+- Promienie powstają z wyniku konkretnej turbiny przed sumowaniem map. Zielony/czerwony/fioletowy/szary odcinek opisuje widoczność piasty; style pozwalają przejść do końca łopaty i dolnego zasięgu. Atrybuty zawierają odległości początku/końca. Odstęp kątowy to gęstość wizualizacji, nie krok całej analizy. Limit 200 000 odcinków/model jest jawny.
+- Kolory wysokości zielony–żółty–czerwony są odrębną legendą od kolorów widoczności. Przycisk **Wysokości + promienie** ustawia ten zestaw w QGIS.
+- Profil SVG czyta model obliczeniowy, pokazuje teren/pokrycie i trzy trasy. Braki są przerwami. Opcjonalna krzywizna/refrakcja stosuje wypukłość `(6/7)*d*(L-d)/(2R)` między końcami trasy. Raster GDAL i profil linii są różnymi aproksymacjami i na granicy cienia mogą się różnić.
+- Samodzielny HTML przedstawia obracaną siatkę, turbinę i trasy. Podgląd ma do 129×129 wierzchołków, kontrolę kamery i powiększenia pionowego. Nie zmienia kroku analizy. Nie zawiera pełnych brył, wnętrz lub prześwitów koron; trasy są widoczną nakładką. Nie jest pełnym ray tracingiem 3D opisanym jako kierunek w suplemencie E.
+- Eksport 2.0.0 renderował mapy synchronicznie w głównym wątku po zakończeniu obliczeń. W 2.1.0 `QgsMapRendererParallelJob` renderuje asynchronicznie, a finalny układ korzysta z gotowych obrazów. Projekt i układ pozostają na GUI; tylko końcowy skład ograniczonych stron może dać krótką pauzę. Przygotowanie piramid/statystyk przeniesiono do zadania roboczego. Licznik czasu i etap działają również po pobraniu.
+- `widoczne_pct` to procent próbek z potwierdzoną widocznością ≥1 turbiny, nie wirnika ani powierzchni działki. `niepewne_pct` obejmuje niepewność/braki/oko pod powierzchnią. Kategorie mogą się nakładać przy kilku turbinach. Poligony nadal są próbkowane po obrysie, nie całej powierzchni.
+
+Zmiana działa na lokalnych folderach danych. Dla starych raportów trzeba ponowić obliczenia, ponieważ skumulowana liczba turbin nie przechowuje ich tożsamości. Można wyłączyć automatyczne pobieranie, aby użyć wyłącznie już posiadanych kafli. Zachowaj katalog `mapy_atlasu` do późniejszego eksportu zapisanego układu QGIS.

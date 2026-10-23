@@ -1,7 +1,8 @@
 """One shared workflow: data, independent circular models and optional project context."""
 from pathlib import Path
+import time
 
-from qgis.PyQt.QtCore import QSettings, QUrl, pyqtSignal
+from qgis.PyQt.QtCore import QSettings, QTimer, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGroupBox,
@@ -95,6 +96,7 @@ class WorkspaceDialog(QDialog):
         self.iface, self.coverage_manager = iface, coverage_manager
         self.settings = QSettings()
         self.task = self.catalog_task = self.last_report = None
+        self.export_job = None
         self.report_dir = None
         self.atlas_layers = {}
         self.running_atlas = True
@@ -171,6 +173,29 @@ class WorkspaceDialog(QDialog):
         note.setWordWrap(True)
         context_form.addRow(note)
         form.addRow(self.context_box)
+        self.detail_box = QGroupBox('Promienie, przekrój i widok 3D — bez wymaganej warstwy obserwatorów')
+        detail_form = QFormLayout(self.detail_box)
+        self.rays = QCheckBox('Zapisz zielone / czerwone promienie widoczności (dla każdej turbiny)')
+        self.rays.setChecked(True)
+        self.ray_spacing = QDoubleSpinBox()
+        self.ray_spacing.setRange(1, 90)
+        self.ray_spacing.setValue(10)
+        self.ray_spacing.setSuffix('°')
+        self.details = QCheckBox('Utwórz przekrój wysokościowy i obracaną scenę 3D')
+        self.details.setChecked(True)
+        self.view_turbine = QSpinBox()
+        self.view_turbine.setRange(1, 1000)
+        self.view_azimuth = QDoubleSpinBox()
+        self.view_azimuth.setRange(0, 359.9)
+        self.view_azimuth.setValue(225)
+        self.view_azimuth.setSuffix('°')
+        detail_form.addRow(self.rays)
+        detail_form.addRow('Odstęp promieni (nie zmienia kroku mapy):', self.ray_spacing)
+        detail_form.addRow(self.details)
+        detail_form.addRow('Numer turbiny w analizowanym zestawie (od 1):', self.view_turbine)
+        detail_form.addRow('Kierunek od turbiny do obserwatora: 0° N, 90° E:', self.view_azimuth)
+        detail_form.addRow(QLabel('Obserwator przekroju leży na brzegu wybranego koła. Scena 3D ma uproszczoną siatkę; analiza zachowuje zadany krok.'))
+        form.addRow(self.detail_box)
         self.report_folder = FolderChooser(self.settings.value('nmt_nmpt/report_folder', ''))
         form.addRow('Folder atlasów i raportów:', self.report_folder)
         self.auto_download = QCheckBox('Automatycznie pobierz brakujące kafle; używaj zgodnych plików z folderów')
@@ -204,6 +229,11 @@ class WorkspaceDialog(QDialog):
         self.stats_label = QLabel('')
         self.stats_label.setWordWrap(True)
         layout.addWidget(self.stats_label)
+        self.activity_label = QLabel('')
+        layout.addWidget(self.activity_label)
+        self.clock = QTimer(self)
+        self.clock.setInterval(500)
+        self.clock.timeout.connect(self.heartbeat)
         self.active = QTableWidget(0, 4)
         self.active.setHorizontalHeaderLabels(['Zasób', 'Kafel', 'Bieżące zadanie', 'MB'])
         self.active.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -220,10 +250,18 @@ class WorkspaceDialog(QDialog):
         self.cancel_button = QPushButton('Anuluj')
         self.map_button = QPushButton('Pokaż wynik w QGIS')
         self.report_button = QPushButton('Otwórz atlas / raport')
+        self.ray_button = QPushButton('Wysokości + promienie')
+        self.profile_button = QPushButton('Przekrój 2D')
+        self.scene_button = QPushButton('Scena 3D')
         hide = QPushButton('Ukryj')
         for button in [self.start_button, self.cancel_button, self.map_button, self.report_button, hide]:
             buttons.addWidget(button)
         layout.addLayout(buttons)
+        detail_buttons = QHBoxLayout()
+        for button in [self.ray_button, self.profile_button, self.scene_button]:
+            detail_buttons.addWidget(button)
+            button.setEnabled(False)
+        layout.addLayout(detail_buttons)
         self.cancel_button.setEnabled(False)
         self.map_button.setEnabled(False)
         self.report_button.setEnabled(False)
@@ -231,6 +269,9 @@ class WorkspaceDialog(QDialog):
         self.cancel_button.clicked.connect(self.cancel)
         self.map_button.clicked.connect(self.show_result)
         self.report_button.clicked.connect(self.open_report)
+        self.ray_button.clicked.connect(self.show_rays)
+        self.profile_button.clicked.connect(lambda: self.open_detail('profile'))
+        self.scene_button.clicked.connect(lambda: self.open_detail('scene'))
         hide.clicked.connect(self.hide)
         self.mode.currentIndexChanged.connect(self.mode_changed)
         for panel in self.panels.values():
@@ -263,7 +304,7 @@ class WorkspaceDialog(QDialog):
         atlas = self.mode.currentIndex() == 0
         self.layer.setFilters(QgsMapLayerProxyModel.PointLayer if atlas else QgsMapLayerProxyModel.VectorLayer)
         self.layer_label.setText('Warstwa turbin (punkty):' if atlas else 'Warstwa do pobierania:')
-        for widget in [self.turbine_box, self.context_box, self.auto_download, self.curvature, self.show_after, self.export_after]:
+        for widget in [self.turbine_box, self.context_box, self.detail_box, self.auto_download, self.curvature, self.show_after, self.export_after]:
             widget.setVisible(atlas)
         self.download_radius.setVisible(not atlas)
         self.inputs.layout().labelForField(self.download_radius).setVisible(not atlas)
@@ -335,11 +376,13 @@ class WorkspaceDialog(QDialog):
         opts = dict(common, models=models, source_settings=source_settings, turbines_ids=ids,
                     hub=self.hub.value(), diameter=self.diameter.value(), hub_field=self.hub_field.currentField(),
                     diameter_field=self.diameter_field.currentField(), eye=self.eye.value(),
-                    auto_download=self.auto_download.isChecked(), curvature=self.curvature.isChecked())
+                    auto_download=self.auto_download.isChecked(), curvature=self.curvature.isChecked(),
+                    rays=self.rays.isChecked(), ray_spacing=self.ray_spacing.value(), details=self.details.isChecked(),
+                    view_turbine=self.view_turbine.value(), view_azimuth=self.view_azimuth.value())
         return layer, opts, contexts
 
     def start(self):
-        if self.task:
+        if self.task or self.export_job:
             return
         try:
             layer, options, contexts = self.options()
@@ -363,9 +406,13 @@ class WorkspaceDialog(QDialog):
         self.map_button.setEnabled(False)
         self.report_button.setEnabled(False)
         self.last_report = None
+        for button in [self.ray_button, self.profile_button, self.scene_button]:
+            button.setEnabled(False)
         self.atlas_layers = {}
         self.log.clear()
         self.progress.setRange(0, 0)
+        self.clock_started = time.monotonic()
+        self.clock.start()
         self.task.stats.connect(self.update_stats)
         self.task.message.connect(self.log.appendPlainText)
         self.task.completed.connect(self.finished)
@@ -385,7 +432,7 @@ class WorkspaceDialog(QDialog):
                 self.stats_label.setText(self.stats_label.text() + f'\nŁączny transfer zadania: {stats["all_bytes"] / 1e6:.1f} MB')
             return
         self.active.setRowCount(0)
-        self.stage.setText(stats['stage'])
+        self.stage.setText(stats['stage'] + (f' · operacja {stats["operation_percent"]}%' if 'operation_percent' in stats else ''))
         self.stats_label.setText(f'Czas: {duration(stats["elapsed"])} | Turbiny etapu: {stats["done"]}/{stats["total"]} | '
                                  f'ETA modelu ≈ {duration(stats.get("eta"))} | Łączny transfer: {stats.get("transfer_bytes", 0) / 1e6:.1f} MB')
         if stats['total']:
@@ -410,16 +457,44 @@ class WorkspaceDialog(QDialog):
             self.stage.setText('Prezentacja atlasu — legendy, mapy PDF / PNG i raport HTML…')
             QgsApplication.processEvents()
             try:
-                from .atlas_presentation import add_atlas, export_atlas
+                from .atlas_presentation import add_atlas, AsyncAtlasExport
                 self.atlas_layers = add_atlas(report, self.iface if self.show_after.isChecked() else None,
                                               show=self.show_after.isChecked())
                 if self.export_after.isChecked():
-                    presentation = export_atlas(report, self.atlas_layers)
-                    if not presentation.get('pdf') or not presentation.get('png'):
-                        self.log.appendPlainText('Sprawdź eksport map: ' + str(presentation))
+                    self.progress.setRange(0, 0)
+                    self.cancel_button.setEnabled(True)
+                    self.export_job = AsyncAtlasExport(report, self.atlas_layers, self)
+                    self.export_job.status.connect(self.stage.setText)
+                    self.export_job.status.connect(self.log.appendPlainText)
+                    self.export_job.completed.connect(self.presentation_finished)
+                    self.export_job.start()
+                    return
             except Exception as exc:
                 self.log.appendPlainText('Wyniki obliczono; problem prezentacji: ' + str(exc))
                 report['presentation_error'] = str(exc)
+        self.complete(report)
+
+    def presentation_finished(self, result):
+        self.export_job = None
+        if result.get('canceled'):
+            self.last_report['presentation_error'] = 'Eksport anulowany; obliczone rastry, promienie i podglądy zostały zachowane.'
+        elif result.get('error'):
+            self.last_report['presentation_error'] = result['error']
+        elif not result.get('pdf') or not result.get('png'):
+            self.last_report['presentation_error'] = 'Nie udało się zapisać wszystkich map PDF / PNG.'
+        from .core import atomic_json
+        if self.report_dir:
+            atomic_json(Path(self.report_dir) / 'report.json', self.last_report)
+        self.complete(self.last_report)
+
+    def complete(self, report):
+        self.clock.stop()
+        self.cancel_button.setEnabled(False)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100 if report['state'].startswith('completed') else 0)
+        self.ray_button.setEnabled(bool(report.get('rays_gpkg')))
+        self.profile_button.setEnabled(bool(report.get('details')))
+        self.scene_button.setEnabled(bool(report.get('details')))
         text = {'completed': 'Gotowe — atlas wykonany' if self.running_atlas else 'Pobieranie wykonane',
                 'completed_with_gaps': 'Zakończono — sprawdź oznaczone braki danych',
                 'canceled': 'Anulowano; ukończone wyniki zachowano', 'failed': 'Zadanie nie powiodło się'}[report['state']]
@@ -437,10 +512,34 @@ class WorkspaceDialog(QDialog):
             QMessageBox.warning(self, PLUGIN_NAME, text)
 
     def cancel(self):
+        if self.export_job:
+            self.export_job.cancel()
+            self.cancel_button.setEnabled(False)
         if self.task:
             self.task.cancel()
             self.cancel_button.setEnabled(False)
             self.stage.setText('Anulowanie… zachowuję ukończone pliki; aktywne połączenie może czekać do 90 s')
+
+    def heartbeat(self):
+        self.activity_label.setText('Łączny czas: ' + duration(time.monotonic() - self.clock_started) +
+                                    (' · renderowanie map w tle' if self.export_job else ' · zadanie aktywne'))
+
+    def show_rays(self):
+        self.show_result()
+        if not self.last_report:
+            return
+        root = QgsProject.instance().layerTreeRoot()
+        for key, layer in self.atlas_layers.items():
+            node = root.findLayer(layer.id())
+            if node and '/' in key:
+                node.setItemVisibilityChecked(key.endswith(('/rays', '/elevation', '/circles')))
+        self.iface.mapCanvas().refresh()
+
+    def open_detail(self, kind):
+        if self.last_report and self.last_report.get('details'):
+            items = self.last_report['details']
+            preferred = next((item for item in items if item['model'] == 'NMPT'), items[0])
+            QDesktopServices.openUrl(QUrl.fromLocalFile(preferred[kind]))
 
     def show_result(self):
         try:

@@ -4,12 +4,13 @@ import html
 import json
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QDateTime, QTimeZone, Qt
+from qgis.PyQt.QtCore import QDateTime, QObject, QSizeF, QTimeZone, QTimer, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor, QFont
 from qgis.core import (
-    QgsColorRampShader, QgsCoordinateReferenceSystem, QgsFillSymbol, QgsGraduatedSymbolRenderer,
+    QgsCategorizedSymbolRenderer, QgsColorRampShader, QgsCoordinateReferenceSystem, QgsFillSymbol, QgsGraduatedSymbolRenderer,
     QgsLayoutExporter, QgsLayoutItemLabel, QgsLayoutItemLegend, QgsLayoutItemMap,
-    QgsLayoutItemPage, QgsLayoutItemScaleBar, QgsLayoutPoint, QgsLayoutSize, QgsLineSymbol,
+    QgsLayoutItemPage, QgsLayoutItemPicture, QgsLayoutItemScaleBar, QgsLayoutPoint, QgsLayoutSize, QgsLineSymbol,
+    QgsMapRendererParallelJob, QgsMapSettings, QgsRendererCategory,
     QgsMarkerSymbol, QgsPalettedRasterRenderer, QgsPrintLayout, QgsProject,
     QgsRasterLayer, QgsRasterShader, QgsRectangle, QgsRendererRange,
     QgsSingleBandPseudoColorRenderer, QgsSvgMarkerSymbolLayer, QgsVectorLayer,
@@ -67,6 +68,12 @@ def count_color(value, maximum):
 
 
 def exposure_style(layer):
+    for field, title in [('widoczne_pct', 'Próbki z widocznością ≥1 turbiny [%]'),
+                         ('niepewne_pct', 'Próbki z niepewnością lub okiem pod powierzchnią [%]'),
+                         ('probki', 'Liczba sprawdzonych próbek')]:
+        index = layer.fields().indexFromName(field)
+        if index >= 0:
+            layer.setFieldAlias(index, title)
     ranges = []
     for low, high, color, label in [(0, 0, '#84949f', 'Brak potwierdzonej widoczności'),
                                     (0.001, 25, '#29b9bf', 'Widoczność do 25% próbek'),
@@ -86,14 +93,47 @@ def exposure_style(layer):
     layer.setRenderer(QgsGraduatedSymbolRenderer('widoczne_pct', ranges))
 
 
+def ray_style(layer, field='piasta'):
+    categories = []
+    for value, color, title in [(0, '#e15465', 'Zasłonięta'), (1, '#18b67a', 'Widoczna'),
+                                (2, '#9977cd', 'Brak rozstrzygnięcia'), (3, '#88949c', 'Oko pod powierzchnią')]:
+        symbol = QgsLineSymbol.createSimple(dict(line_color=color, line_width='0.38', line_style='dash' if value >= 2 else 'solid'))
+        categories.append(QgsRendererCategory(value, symbol, title))
+    layer.setRenderer(QgsCategorizedSymbolRenderer(field, categories))
+
+
+def elevation_style(layer):
+    from osgeo import gdal
+    ds = gdal.Open(layer.source())
+    stats = ds.GetRasterBand(1).GetStatistics(True, False)
+    ds = None
+    low, high = (stats[0], stats[1]) if stats and stats[3] >= 0 else (0, 300)
+    high = max(high, low + 1)
+    ramp = QgsColorRampShader(low, high)
+    ramp.setColorRampType(QgsColorRampShader.Interpolated)
+    ramp.setColorRampItemList([QgsColorRampShader.ColorRampItem(low + (high-low)*f, QColor(c), f'{low+(high-low)*f:.1f} m')
+                              for f, c in [(0, '#21865a'), (.5, '#e4d45e'), (1, '#d34747')]])
+    shader = QgsRasterShader()
+    shader.setRasterShaderFunction(ramp)
+    layer.setRenderer(QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader))
+
+
 def add_atlas(report, iface=None, show=True):
     project = QgsProject.instance()
     run = report['report_dir']
     existing = [layer for layer in project.mapLayers().values() if layer.customProperty(KEY, '') == run]
     if existing:
+        if show:
+            node = project.layerTreeRoot().findLayer(existing[0].id())
+            while node:
+                if node.customProperty(KEY, '') == run or node.name().startswith('Atlas widoczności ·'):
+                    node.setItemVisibilityChecked(True)
+                    break
+                node = node.parent()
         return {layer.customProperty('nmt_nmpt/atlas_key'): layer for layer in existing}
     root = project.layerTreeRoot()
     group = root.insertGroup(0, 'Atlas widoczności · ' + Path(run).name.replace('atlas_', ''))
+    group.setCustomProperty(KEY, run)
     group.setItemVisibilityChecked(show)
     layers = {}
 
@@ -134,6 +174,14 @@ def add_atlas(report, iface=None, show=True):
                 context = QgsVectorLayer(report['gpkg'] + '|layername=' + role + '_' + resource, titles[role] + ' ' + resource, 'ogr')
                 exposure_style(context)
                 add(context, model_group, resource + '/' + role)
+        if report.get('rays_gpkg'):
+            rays = QgsVectorLayer(report['rays_gpkg'] + '|layername=promienie_' + resource,
+                                  resource + ' — promienie: widoczność piasty', 'ogr')
+            for field, title in [('piasta', 'Widoczność piasty'), ('koniec', 'Widoczność końca łopaty'), ('dolny', 'Widoczność dolnego zasięgu')]:
+                ray_style(rays, field)
+                rays.styleManager().addStyleFromLayer(title)
+            rays.styleManager().setCurrentStyle('Widoczność piasty')
+            add(rays, model_group, resource + '/rays', False)
         quality = QgsRasterLayer(product['paths']['quality'], resource + ' — jakość i brakujące dane')
         palette(quality, QUALITY)
         add(quality, model_group, resource + '/quality')
@@ -149,6 +197,10 @@ def add_atlas(report, iface=None, show=True):
         palette(rotor, ROTOR)
         rotor.setOpacity(0.82)
         add(rotor, model_group, resource + '/rotor', False)
+        if product['paths'].get('elevation'):
+            elevation = QgsRasterLayer(product['paths']['elevation'], resource + ' — wysokość: zielony nisko / czerwony wysoko')
+            elevation_style(elevation)
+            add(elevation, model_group, resource + '/elevation', False)
         if product['paths'].get('hillshade'):
             hill = QgsRasterLayer(product['paths']['hillshade'], resource + ' — cieniowanie terenu')
             hill.setOpacity(0.45)
@@ -165,11 +217,17 @@ def add_atlas(report, iface=None, show=True):
     return layers
 
 
-def export_atlas(report, layers, project=None):
+def build_layout(report, layers, project=None):
     project = project or QgsProject.instance()
     layout = QgsPrintLayout(project)
     layout.initializeDefaults()
-    layout.setName('Atlas widoczności ' + Path(report['report_dir']).name)
+    title = 'Atlas widoczności ' + Path(report['report_dir']).name
+    number = 1
+    unique = title
+    while project.layoutManager().layoutByName(unique) is not None:
+        number += 1
+        unique = title + f' ({number})'
+    layout.setName(unique)
     # Qt bundles Windows/IANA timezone mappings; no extra Python tzdata dependency.
     warsaw = QTimeZone(b'Europe/Warsaw')
     generated = QDateTime.currentDateTimeUtc().toTimeZone(warsaw).toString('dd.MM.yyyy HH:mm')
@@ -259,6 +317,15 @@ def export_atlas(report, layers, project=None):
         label(footer,
               8, offset + 200, 282, 6, 7, '#526b76')
     project.layoutManager().addLayout(layout)
+    return layout
+
+
+def export_atlas(report, layers, project=None):
+    """Synchronous helper for scripts. The plugin UI uses AsyncAtlasExport below."""
+    return export_layout(report, build_layout(report, layers, project))
+
+
+def export_layout(report, layout):
     folder = Path(report['report_dir'])
     exporter = QgsLayoutExporter(layout)
     pdf_options = QgsLayoutExporter.PdfExportSettings()
@@ -267,18 +334,123 @@ def export_atlas(report, layers, project=None):
     pdf_options.appendGeoreference = False
     pdf_options.exportMetadata = False
     pdf_result = exporter.exportToPdf(str(folder / 'atlas.pdf'), pdf_options)
-    image_options = QgsLayoutExporter.ImageExportSettings()
-    image_options.dpi = 120
-    image_options.exportMetadata = False
-    image_options.generateWorldFile = False
-    image_result = exporter.exportToImage(str(folder / 'atlas.png'), image_options)
+    image_result = QgsLayoutExporter.Success
+    png = []
+    for page in range(layout.pageCollection().pageCount()):
+        image = exporter.renderPageToImage(page, dpi=120)
+        path = folder / ('atlas.png' if page == 0 else f'atlas_{page+1}.png')
+        if image.isNull() or not image.save(str(path), 'PNG'):
+            image_result = QgsLayoutExporter.FileError
+        else:
+            png.append(str(path))
     presentation = dict(layout=layout.name(), pdf=str(folder / 'atlas.pdf') if pdf_result == QgsLayoutExporter.Success else None,
                         pdf_status=int(pdf_result), image_status=int(image_result),
-                        png=[str(p) for p in sorted(folder.glob('atlas*.png'))])
+                        png=png)
     make_html(report, presentation)
     report['presentation'] = presentation
     atomic_json(folder / 'report.json', report)
     return presentation
+
+
+class AsyncAtlasExport(QObject):
+    """Render provider data with QGIS' asynchronous renderer; only bounded page assembly on GUI.
+
+    QgsProject/QgsPrintLayout never cross Python worker threads. Cached map pictures keep
+    the final PDF/PNG assembly independent of slow WMS services and large source rasters.
+    """
+    completed = pyqtSignal(object)
+    status = pyqtSignal(str)
+
+    def __init__(self, report, layers, parent=None):
+        super().__init__(parent)
+        self.report, self.layers = report, layers
+        self.layout = self.job = None
+        self.index, self.canceled = 0, False
+        self.maps = []
+
+    def start(self):
+        QTimer.singleShot(0, self.prepare)
+
+    def prepare(self):
+        if self.canceled:
+            self.completed.emit(dict(canceled=True))
+            return
+        try:
+            self.layout = build_layout(self.report, self.layers)
+            self.maps = sorted([i for i in self.layout.items() if isinstance(i, QgsLayoutItemMap)], key=lambda i: i.pos().y())
+            self.next_map()
+        except Exception as exc:
+            self.fail(exc)
+
+    def next_map(self):
+        if self.canceled:
+            self.completed.emit(dict(canceled=True))
+            return
+        try:
+            if self.index == len(self.maps):
+                self.status.emit('Składanie gotowych obrazów w PDF / PNG i HTML…')
+                QTimer.singleShot(0, self.finish)
+                return
+            item = self.maps[self.index]
+            self.status.emit(f'Renderowanie mapy w tle {self.index + 1}/{len(self.maps)} — QGIS pozostaje dostępny')
+            size = item.sizeWithUnits()
+            settings = item.mapSettings(item.extent(), QSizeF(size.width() * 150 / 25.4, size.height() * 150 / 25.4), 150, True)
+            settings.setFlag(QgsMapSettings.ForceVectorOutput, False)
+            self.job = QgsMapRendererParallelJob(settings)
+            self.job.finished.connect(self.rendered)
+            self.job.start()
+        except Exception as exc:
+            self.fail(exc)
+
+    def rendered(self):
+        if self.canceled:
+            self.job = None
+            self.completed.emit(dict(canceled=True))
+            return
+        try:
+            errors = [e.message for e in self.job.errors()]
+            if errors:
+                raise ValueError('Renderowanie: ' + '; '.join(errors))
+            image = self.job.renderedImage()
+            cache = Path(self.report['report_dir']) / 'mapy_atlasu'
+            cache.mkdir(exist_ok=True)
+            path = cache / f'mapa_{self.index + 1}.png'
+            if image.isNull() or not image.save(str(path), 'PNG'):
+                raise ValueError('Nie można zapisać obrazu mapy')
+            item = self.maps[self.index]
+            picture = QgsLayoutItemPicture(self.layout)
+            self.layout.addLayoutItem(picture)
+            picture.attemptMove(QgsLayoutPoint(item.pos().x(), item.pos().y()))
+            picture.attemptResize(item.sizeWithUnits())
+            picture.setPicturePath(str(path))
+            picture.setZValue(item.zValue())
+            picture.setFrameEnabled(True)
+            picture.setFrameStrokeColor(QColor('#c4d4d8'))
+            item.setVisibility(False)
+            self.index += 1
+            self.job = None
+            QTimer.singleShot(0, self.next_map)
+        except Exception as exc:
+            self.fail(exc)
+
+    def finish(self):
+        if self.canceled:
+            self.completed.emit(dict(canceled=True))
+            return
+        try:
+            self.completed.emit(export_layout(self.report, self.layout))
+        except Exception as exc:
+            self.fail(exc)
+
+    def fail(self, exc):
+        self.job = None
+        self.completed.emit(dict(error=str(exc)))
+
+    def cancel(self):
+        self.canceled = True
+        if self.job:
+            self.status.emit('Anulowanie renderowania — obliczone dane zostają na dysku')
+            self.job.cancelWithoutBlocking()
 
 
 def make_html(report, presentation):
@@ -293,7 +465,11 @@ def make_html(report, presentation):
     text += '''<style>body{margin:0;background:#eef3f5;color:#153747;font:16px system-ui,sans-serif}header{background:#153747;color:white;padding:36px max(24px,6vw)}header small{color:#89e0d4;letter-spacing:.18em}h1{margin:.4em 0;font-size:clamp(25px,4vw,44px)}main{max-width:1250px;margin:26px auto;padding:0 20px}.cards{display:flex;gap:18px;flex-wrap:wrap}article{background:white;border-radius:16px;padding:24px;box-shadow:0 8px 24px #1237460a;flex:1;min-width:230px}article small{font-weight:700;color:#16a79c}strong{display:block;font-size:34px;margin:12px 0}span{line-height:1.6;color:#526d7b}img{width:100%;height:auto;margin:24px 0 0;border-radius:12px;box-shadow:0 10px 36px #15374718}nav{margin:24px 0;display:flex;gap:14px;flex-wrap:wrap}nav a{background:#153747;color:white;text-decoration:none;padding:12px 18px;border-radius:9px}aside{background:#fff;padding:22px;border-radius:12px;line-height:1.7}footer{font-size:13px;color:#57717d;margin:26px 0}</style>'''
     text += '<header><small>KRAJOBRAZ · EKSPOZYCJA · TURBINY</small><h1>Atlas widoczności</h1><p>Całe otoczenie inwestycji. NMT i NMPT w osobnych, porównywalnych modelach.</p></header><main>'
     text += '<div class="cards">' + ''.join(cards) + '</div><nav><a href="atlas.pdf">Atlas PDF</a><a href="atlas.gpkg">Warstwy GeoPackage</a><a href="ekspozycja.csv">Ekspozycja CSV</a><a href="report.md">Raport</a></nav>'
-    text += pages + '<aside><b>Jak czytać mapę</b><br>Kolor pokazuje potwierdzoną w modelu liczbę widocznych turbin. Fiolet oznacza nierozstrzygniętą trasę lub brak danych; szare pokrycie może oznaczać dach lub koronę na wysokości oka. NMT opisuje sam teren, NMPT uwzględnia jego pokrycie. Widoczność trzech punktów wirnika nie mierzy widocznej powierzchni łopat. Ekspozycja dróg i zabudowy pochodzi z próbek.</aside>'
+    text += pages + '<aside><b>Jak czytać mapę i procenty</b><br>Kolor pokazuje potwierdzoną w modelu liczbę widocznych turbin. Fiolet oznacza nierozstrzygniętą trasę lub brak danych; szare pokrycie może oznaczać dach lub koronę na wysokości oka. NMT opisuje sam teren, NMPT uwzględnia jego pokrycie. Widoczność trzech punktów wirnika nie mierzy widocznej powierzchni łopat.<br><b>widoczne_pct = udział próbek z widocznością co najmniej jednej turbiny.</b> 80% to np. 8 z 10 sprawdzonych miejsc przy drodze lub obrysie budynku. To nie 80% działki ani wirnika. <b>niepewne_pct</b> to próbki z niepewnością lub okiem pod powierzchnią; obie kategorie mogą się nakładać przy wielu turbinach.</aside>'
+    for item in report.get('details', []):
+        profile, scene = html.escape(Path(item['profile']).name), html.escape(Path(item['scene']).name)
+        text += (f'<h2>{html.escape(item["model"])} · przekrój i scena 3D</h2><nav><a href="{scene}">Obróć scenę 3D</a>'
+                 f'<a href="{profile}">Otwórz przekrój</a></nav><img src="{profile}" alt="Przekrój terenu i linii widzenia">')
     text += f'<footer>NMT i NMTP ściągacz {VERSION} · mapy i dane pozostają w tym folderze. Zachowaj cały katalog, aby HTML działał także bez internetu.</footer></main></html>'
     (folder / 'atlas.html').write_text(text, encoding='utf-8')
     presentation['html'] = str(folder / 'atlas.html')

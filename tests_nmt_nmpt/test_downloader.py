@@ -974,7 +974,7 @@ class AtlasTests(unittest.TestCase):
             dialog.auto_download.setChecked(False)
             with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning'):
                 dialog.start()
-                DownloaderTests.wait_until(self, lambda: dialog.task is None and dialog.last_report is not None, 15000)
+                DownloaderTests.wait_until(self, lambda: dialog.task is None and dialog.export_job is None and dialog.last_report is not None, 15000)
             self.assertEqual(dialog.last_report['state'], 'completed', dialog.last_report.get('fatal_error'))
             self.assertNotIn('presentation_error', dialog.last_report)
             self.assertTrue(Path(dialog.last_report['presentation']['pdf']).is_file())
@@ -1066,6 +1066,128 @@ class AtlasTests(unittest.TestCase):
         self.assertEqual(len(presentation['png']), 2)
         self.assertTrue(Path(presentation['html']).is_file())
         self.assertGreater(Path(presentation['pdf']).stat().st_size, 10000)
+
+    def test_radial_states_are_per_turbine_and_preserve_unknown(self):
+        from osgeo import ogr
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.atlas_details import RayWriter
+        grid = Grid(0, 20, 1, 20, 20)
+        turbine = dict(id='A', x=10, y=10)
+        inside = grid.circle(turbine, 8)
+        blocked = np.zeros(inside.shape, bool)
+        visible = inside.copy()
+        uncertain = np.zeros(inside.shape, bool)
+        quality = inside.astype(np.uint8)
+        writer = RayWriter(self.root, 90, self.event)
+        writer.add_model('NMPT')
+        writer.write(grid, turbine, 8, (inside, [visible]*3, [blocked]*3, quality))
+        turbine['id'] = 'B'
+        uncertain[:, 14:] = inside[:, 14:]
+        writer.write(grid, turbine, 8, (inside, [blocked]*3, [uncertain]*3, quality))
+        writer.close()
+        dataset = ogr.Open(str(self.root / 'promienie.gpkg'))
+        features = list(dataset.GetLayerByName('promienie_NMPT'))
+        self.assertTrue(any(f['piasta'] == 1 for f in features if f['turbina'] == 'A'))
+        self.assertFalse(any(f['piasta'] == 1 for f in features if f['turbina'] == 'B'))
+        self.assertTrue(any(f['piasta'] == 2 for f in features if f['turbina'] == 'B'))
+        self.assertTrue(all(0 <= f['od_m'] < f['do_m'] <= 8 for f in features))
+        dataset = None
+
+    def test_profile_reads_actual_grid_and_distinguishes_occlusion_and_gaps(self):
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.atlas_details import profile_data
+        grid = Grid(0, 100, 1, 100, 100)
+        ground = np.full((100, 100), 100.0)
+        valid = np.ones(ground.shape, bool)
+        turbine = dict(id='A', x=50, y=50, hub=20, diameter=10)
+        opts = dict(eye=1.7, view_azimuth=90, curvature=False)
+        result = profile_data(ground, valid, ground, valid, grid, turbine, 40, 100, opts)
+        self.assertEqual(result['status'], ['widoczna'] * 3)
+        self.assertAlmostEqual(result['eye_z'], 101.7)
+        surface = ground.copy()
+        surface[:, 70:72] = 150
+        result = profile_data(ground, valid, surface, valid, grid, turbine, 40, 100, opts)
+        self.assertEqual(result['status'], ['zasłonięta'] * 3)
+        valid_surface = valid.copy()
+        valid_surface[:, 65:67] = False
+        result = profile_data(ground, valid, surface, valid_surface, grid, turbine, 40, 100, opts)
+        self.assertEqual(result['status'], ['brak danych'] * 3)
+        self.assertTrue(np.isnan(result['surface']).any())
+
+    def test_profile_curvature_bulge_and_eye_under_canopy(self):
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.atlas_details import profile_data, EARTH_DIAMETER
+        grid = Grid(0, 100, 1, 100, 100)
+        ground = np.full((100, 100), 100.0)
+        valid = np.ones(ground.shape, bool)
+        turbine = dict(id='A', x=50, y=50, hub=20, diameter=10)
+        opts = dict(eye=1.7, view_azimuth=90, curvature=True)
+        result = profile_data(ground, valid, ground + 10, valid, grid, turbine, 40, 100, opts)
+        self.assertEqual(result['status'], ['oko pod powierzchnią'] * 3)
+        self.assertAlmostEqual(float(result['bulge'].max()), (6 / 7) * 20 * 20 / EARTH_DIAMETER)
+        self.assertEqual(float(result['bulge'][0]), 0)
+        self.assertEqual(float(result['bulge'][-1]), 0)
+
+    def test_3d_payload_is_bounded_and_missing_surface_is_not_zero(self):
+        import re
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.atlas_details import write_details
+        grid = Grid(0, 300, 1, 300, 300)
+        ground = np.full((300, 300), -3.0)
+        valid = np.ones(ground.shape, bool)
+        surface_valid = valid.copy()
+        surface_valid[140:170, 140:170] = False
+        turbine = dict(id='</script><script>bad()', x=150, y=150, hub=20, diameter=10)
+        result = write_details(self.root, dict(resource='NMPT', radius=100), grid, turbine, ground, valid,
+                               ground, surface_valid, -3, dict(eye=1.7, curvature=False), self.event)
+        text = Path(result['scene']).read_text()
+        payload = json.loads(re.search(r'const scene=(.*?);\n', text).group(1))
+        self.assertLessEqual(len(payload['x']), 129)
+        self.assertLessEqual(len(payload['y']), 129)
+        self.assertTrue(any(v is None for row in payload['surface'] for v in row))
+        self.assertEqual(payload['ground_z'], -3)
+        self.assertNotIn('</script><script>bad()', text)
+        self.assertTrue(Path(result['profile']).is_file())
+
+    def test_radial_limit_is_reported_without_affecting_raster_work(self):
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.atlas_details import RayWriter
+        grid = Grid(0, 20, 1, 20, 20)
+        turbine = dict(id='A', x=10, y=10)
+        inside = grid.circle(turbine, 8)
+        no = np.zeros(inside.shape, bool)
+        writer = RayWriter(self.root, 10, self.event, limit=2)
+        writer.add_model('NMT')
+        writer.write(grid, turbine, 8, (inside, [inside]*3, [no]*3, inside.astype(np.uint8)))
+        self.assertEqual(writer.summary['features'], 2)
+        self.assertTrue(writer.summary['truncated'])
+        writer.close()
+
+    def test_async_presentation_allows_timers_and_cancel_preserves_results(self):
+        from qgis.PyQt.QtCore import QTimer
+        from nmt_nmpt_downloader.atlas_presentation import add_atlas, AsyncAtlasExport
+        report = self.engine().run()
+        job = AsyncAtlasExport(report, add_atlas(report))
+        results, ticks = [], []
+        timer = QTimer()
+        timer.setInterval(1)
+        timer.timeout.connect(lambda: ticks.append(1))
+        timer.start()
+        job.completed.connect(results.append)
+        job.start()
+        DownloaderTests.wait_until(self, lambda: bool(results), 15000)
+        timer.stop()
+        self.assertGreater(len(ticks), 2)
+        self.assertNotIn('error', results[0], results)
+        self.assertTrue(Path(results[0]['pdf']).is_file())
+        canceled = AsyncAtlasExport(report, job.layers)
+        results.clear()
+        canceled.completed.connect(results.append)
+        canceled.start()
+        canceled.cancel()
+        DownloaderTests.wait_until(self, lambda: bool(results))
+        self.assertTrue(results[0]['canceled'])
+        self.assertTrue(Path(report['products'][0]['paths']['count']).is_file())
 
     def test_unified_ui_observers_empty_and_one_menu_action(self):
         from qgis.PyQt.QtWidgets import QMainWindow

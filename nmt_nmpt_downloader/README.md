@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.0.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.1.0
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.0.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.1.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -47,4 +47,17 @@ WCS GUGiK dostarcza numeryczny ASCII, lokalnie kompresowany do GeoTIFF Float32 w
 
 Kod: `workspace_dialog.py` — jedyny formularz; `atlas.py` — koła i rastry; `atlas_context.py` — ekspozycja; `atlas_presentation.py` — style i eksport; `engine.py`/`core.py`/`catalog.py` — transfer; `coverage.py` — indeksy. Starsze moduły linii pozostają pomocniczo w kodzie, lecz ich okno nie jest rejestrowane w menu.
 
-Licencja GPL-3.0. Pełna instrukcja i walidacja: `docs/Instrukcja_ATLAS_2.0.0.md` w repozytorium.
+Licencja GPL-3.0. Pełna instrukcja i walidacja: `docs/Instrukcja_ATLAS_2.1.0.md` w repozytorium.
+
+
+## Nowości 2.1.0: promienie, przekrój i scena 3D
+
+- **Wysokości + promienie** przełącza mapę na wysokość: zielony nisko, czerwony wysoko, z odcinkami widoczności. Promienie piasty: zielony widoczna, czerwony zasłonięta, fioletowy niepewna, szary oko pod powierzchnią. Alternatywne style warstwy pokazują koniec łopaty i dolny zasięg. Atrybuty `turbina`, `azymut`, `od_m`, `do_m` pozwalają wybrać trasę i zakres.
+- Odstęp promieni domyślnie 10°; raster nadal analizuje wszystkie komórki. Limit 200 000 odcinków/model jest raportowany, nie ogranicza obliczeń mapy.
+- **Przekrój 2D** pokazuje teren, powierzchnię i trzy przerywane linie widzenia. Wybierz numer turbiny w zestawie i kierunek od niej do obserwatora na brzegu koła, 0° północ siatki, 90° wschód. Warstwa obserwatorów nie jest potrzebna.
+- **Scena 3D** otwiera lokalny HTML z terenem, NMPT, turbiną i liniami. Obrót myszą, nachylenie, powiększenie i pion ×1–5. Siatka podglądu ma do 129×129 wierzchołków; analiza i przekrój zachowują oryginalny krok. Jest to prezentacja powierzchni 2,5D w 3D, bez pełnego ray tracingu brył. Przy pion ×1 proporcje metrów są zachowane.
+- `widoczne_pct` oznacza procent próbek z potwierdzoną widocznością ≥1 turbiny. 80% = np. 8 z 10 badanych miejsc. To nie procent wirnika ani działki. `niepewne_pct` to udział próbek z niepewnością / okiem pod powierzchnią; może nakładać się z widocznością innych turbin.
+- Renderowanie map do atlasu działa asynchronicznie przez mechanizm QGIS. Okno pokazuje etap i bieżący czas także po pobraniu. Statystyki i piramidy modeli powstają w zadaniu roboczym. Końcowe składanie gotowych obrazów w PDF/PNG odbywa się w interfejsie i może spowodować krótką pauzę. **Anuluj** podczas renderowania zachowuje obliczone pliki.
+- Aby uzyskać nowe warstwy dla wcześniejszego wyniku, uruchom analizę na tych samych folderach. Możesz wyłączyć automatyczne pobieranie. Stary raport nie zawiera wyników oddzielnych turbin potrzebnych do promieni.
+
+Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_NMPT.svg`, `scena_3d_NMT.html`, `scena_3d_NMPT.html`, `mapy_atlasu/`. Zachowaj folder obrazów, jeśli chcesz ponownie eksportować układ zapisany w projekcie QGIS. Podglądy i raporty są lokalne i nie korzystają z CDN ani zewnętrznej usługi 3D.
