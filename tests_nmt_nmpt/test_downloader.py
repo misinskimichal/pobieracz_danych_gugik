@@ -531,6 +531,24 @@ class DownloaderTests(unittest.TestCase):
         self.assertEqual(second['counts'], {'visible_modeled': 1})
         self.assertEqual(Handler.counts, previous, 'Drugi przebieg nie powinien pobierać ponownie poprawnych kafli')
 
+    def test_circular_atlas_downloads_ground_and_surface_without_receivers(self):
+        from nmt_nmpt_downloader.atlas import AtlasEngine
+        Handler.resolutions = {'DSM_PL-EVRF2007-NH': 0.5}
+        layer = QgsVectorLayer('Point?crs=EPSG:2180', 'turbina', 'memory')
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromWkt('POINT (100.25 100.25)'))
+        layer.dataProvider().addFeatures([feature])
+        opts = dict(models=[dict(resource='NMPT', radius=2, resolution=1, height='PL-EVRF2007-NH')],
+                    source_settings={r: dict(resolution=0, height='PL-EVRF2007-NH', strict_resolution=False,
+                                             alternate_height=False) for r in ['NMT', 'NMPT']},
+                    folders={r: str(self.root / r) for r in ['NMT', 'NMPT']},
+                    report_folder=str(self.root / 'reports'), pixels=8, workers=2,
+                    auto_download=True, eye=1.7, hub=120, diameter=160, curvature=False)
+        report = AtlasEngine(QgsVectorLayerFeatureSource(layer), layer.crs(), CONTEXT, opts).run()
+        self.assertEqual(report['state'], 'completed', report.get('fatal_error'))
+        self.assertEqual([d['resource'] for d in report['downloads']], ['NMT', 'NMPT'])
+        self.assertEqual(report['products'][0]['summary']['unknown_cells'], 0)
+
 
 class VisibilityTests(unittest.TestCase):
     def setUp(self):
@@ -821,6 +839,274 @@ class VisibilityTests(unittest.TestCase):
             self.assertEqual(len(project.mapLayers()), 5)
         finally:
             dialog.deleteLater()
+
+
+class AtlasTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.event = threading.Event()
+        self.config = dict(radius=100, eye=1.7, hub=20, diameter=20, hub_field='', diameter_field='',
+                           models=[dict(resource='NMT', radius=80, resolution=2, height='PL-EVRF2007-NH'),
+                                   dict(resource='NMPT', radius=60, resolution=1, height='PL-EVRF2007-NH')],
+                           source_settings={r: dict(resolution=0, height='PL-EVRF2007-NH', strict_resolution=False,
+                                                    alternate_height=False) for r in ['NMT', 'NMPT']},
+                           folders={r: str(self.root / r) for r in ['NMT', 'NMPT']},
+                           report_folder=str(self.root / 'reports'), auto_download=False, curvature=False)
+        for resource in ['NMT', 'NMPT']:
+            VisibilityTests.raster(self, resource, np.full((201, 201), 100.0), 1, origin=(0, 201))
+        self.layer = QgsVectorLayer('Point?crs=EPSG:2180', 'turbiny', 'memory')
+        feat = QgsFeature()
+        feat.setGeometry(QgsGeometry.fromWkt('POINT (80.5 100.5)'))
+        self.layer.dataProvider().addFeatures([feat])
+
+    def tearDown(self):
+        QgsProject.instance().clear()
+        self.tmp.cleanup()
+
+    def engine(self, contexts=None):
+        from nmt_nmpt_downloader.atlas import AtlasEngine
+        return AtlasEngine(QgsVectorLayerFeatureSource(self.layer), self.layer.crs(), CONTEXT,
+                           self.config, contexts)
+
+    def test_circle_without_observers_independent_model_ranges_and_steps(self):
+        report = self.engine().run()
+        self.assertEqual(report['state'], 'completed', report.get('fatal_error'))
+        self.assertEqual(len(report['products']), 2)
+        for product in report['products']:
+            ds = gdal.Open(product['paths']['count'])
+            data = ds.ReadAsArray()
+            self.assertTrue((data == 65535).any(), 'Corners outside a circle must remain NoData')
+            self.assertEqual(int(data[data != 65535].max()), 1)
+            self.assertEqual(ds.GetGeoTransform()[1], product['resolution'])
+            self.assertLess(abs(product['summary']['area_km2'] - np.pi * product['radius']**2 / 1e6), 0.002)
+            ds = None
+        self.assertTrue(Path(report['gpkg']).is_file())
+        self.assertEqual(report['context_summary'], [])
+        self.assertTrue((Path(report['report_dir']) / 'events.jsonl').is_file())
+
+    def test_overlapping_circles_count_multiple_turbines(self):
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromWkt('POINT (120.5 100.5)'))
+        self.layer.dataProvider().addFeatures([feature])
+        report = self.engine().run()
+        self.assertEqual(report['state'], 'completed', report.get('fatal_error'))
+        data = gdal.Open(report['products'][1]['paths']['count']).ReadAsArray()
+        self.assertEqual(int(data[data != 65535].max()), 2)
+
+    def test_all_missing_surface_preserves_nmt_and_marks_nmpt_unknown(self):
+        VisibilityTests.raster(self, 'NMPT', np.full((201, 201), -9999), 1, origin=(0, 201))
+        report = self.engine().run()
+        self.assertEqual(report['state'], 'completed_with_gaps', report.get('fatal_error'))
+        self.assertEqual(report['products'][0]['state'], 'completed')
+        self.assertGreater(report['products'][1]['summary']['unknown_cells'], 0)
+
+    def test_preflight_rejects_oversized_grid_before_network(self):
+        self.config['models'][0].update(radius=20000, resolution=0.5)
+        self.config['auto_download'] = True
+        with patch('nmt_nmpt_downloader.atlas.AtlasEngine.download') as download:
+            report = self.engine().run()
+            download.assert_not_called()
+        self.assertEqual(report['state'], 'failed')
+        self.assertIn('krok', report['fatal_error'])
+
+    def test_cancel_preserves_diagnostic_report(self):
+        engine = self.engine()
+        engine.cancel_event.set()
+        report = engine.run()
+        self.assertEqual(report['state'], 'canceled')
+        self.assertTrue((Path(report['report_dir']) / 'report.json').is_file())
+
+    def test_error_for_one_circle_does_not_stop_next_model(self):
+        from nmt_nmpt_downloader.atlas import circular_viewshed
+        calls = []
+
+        def fail_first(*args):
+            calls.append(1)
+            if len(calls) == 1:
+                raise ValueError('kontrolowany błąd koła')
+            return circular_viewshed(*args)
+
+        with patch('nmt_nmpt_downloader.atlas.circular_viewshed', side_effect=fail_first):
+            report = self.engine().run()
+        self.assertEqual(report['state'], 'completed_with_gaps', report.get('fatal_error'))
+        self.assertEqual(len(report['products']), 2)
+        self.assertEqual(report['products'][1]['state'], 'completed')
+
+    def test_coarse_cell_keeps_small_source_nodata_hole_unknown(self):
+        self.config['models'][1]['resolution'] = 2
+        values = np.full((201, 201), 100.0)
+        values[100, 111] = -9999
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        report = self.engine().run()
+        ds = gdal.Open(report['products'][1]['paths']['quality'])
+        gt = ds.GetGeoTransform()
+        value = ds.ReadAsArray(int((111.5 - gt[0]) / gt[1]), int((100.5 - gt[3]) / gt[5]), 1, 1)[0, 0]
+        self.assertEqual(value, 3)
+        ds = None
+
+    def test_below_sea_level_does_not_trigger_gdal_zero_height_clamp(self):
+        for resource in ['NMT', 'NMPT']:
+            VisibilityTests.raster(self, resource, np.full((201, 201), -10.0), 1, origin=(0, 201))
+        report = self.engine().run()
+        self.assertEqual(report['state'], 'completed', report.get('fatal_error'))
+        self.assertEqual(report['products'][1]['summary']['visible_cells'], report['products'][1]['summary']['cells'])
+
+    def test_unified_gui_background_task_exports_atlas_without_context_layers(self):
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from qgis.gui import QgsMapCanvas
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        window, canvas = QMainWindow(), QgsMapCanvas()
+        QgsProject.instance().addMapLayer(self.layer)
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(inner): return self.layer
+            def mapCanvas(self): return canvas
+
+        dialog = WorkspaceDialog(Iface())
+        try:
+            for resource, panel in dialog.panels.items():
+                panel.analysis_radius.setValue(50)
+                panel.step.setCurrentText('2')
+                panel.folder.edit.setText(self.config['folders'][resource])
+            dialog.report_folder.edit.setText(self.config['report_folder'])
+            dialog.auto_download.setChecked(False)
+            with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning'):
+                dialog.start()
+                DownloaderTests.wait_until(self, lambda: dialog.task is None and dialog.last_report is not None, 15000)
+            self.assertEqual(dialog.last_report['state'], 'completed', dialog.last_report.get('fatal_error'))
+            self.assertNotIn('presentation_error', dialog.last_report)
+            self.assertTrue(Path(dialog.last_report['presentation']['pdf']).is_file())
+            self.assertIn('NMPT/count', dialog.atlas_layers)
+        finally:
+            dialog.deleteLater()
+            canvas.deleteLater()
+
+    def test_nmpt_wall_casts_shadow_and_nmt_remains_visible(self):
+        values = np.full((201, 201), 100.0)
+        values[:, 110:113] = 180
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        report = self.engine().run()
+        self.assertEqual(report['state'], 'completed', report.get('fatal_error'))
+        for product in report['products']:
+            ds = gdal.Open(product['paths']['count'])
+            gt = ds.GetGeoTransform()
+            col, row = int((130.5 - gt[0]) / gt[1]), int((100.5 - gt[3]) / gt[5])
+            self.assertEqual(int(ds.GetRasterBand(1).ReadAsArray(col, row, 1, 1)[0, 0]), 1 if product['resource'] == 'NMT' else 0)
+            ds = None
+
+    def test_missing_strip_propagates_uncertainty_instead_of_false_visibility(self):
+        values = np.full((201, 201), 100.0)
+        values[:, 110:113] = -9999
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        report = self.engine().run()
+        self.assertEqual(report['state'], 'completed_with_gaps', report.get('fatal_error'))
+        product = report['products'][1]
+        quality = gdal.Open(product['paths']['quality'])
+        gt = quality.GetGeoTransform()
+
+        def pixel(x):
+            return quality.ReadAsArray(int((x - gt[0]) / gt[1]), int((100.5 - gt[3]) / gt[5]), 1, 1)[0, 0]
+        self.assertEqual(pixel(130.5), 2)
+        self.assertEqual(pixel(111.5), 3)
+        self.assertEqual(pixel(50.5), 1)
+        quality = None
+
+    def test_roof_is_not_a_ground_level_observation_position(self):
+        values = np.full((201, 201), 100.0)
+        values[95:105, 110:120] = 115
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        report = self.engine().run()
+        product = report['products'][1]
+        quality = gdal.Open(product['paths']['quality'])
+        gt = quality.GetGeoTransform()
+        value = quality.ReadAsArray(int((115.5 - gt[0]) / gt[1]), int((100.5 - gt[3]) / gt[5]), 1, 1)[0, 0]
+        self.assertEqual(value, 4)
+        quality = None
+
+    def test_three_height_maps_are_not_just_one_binary_answer(self):
+        values = np.full((201, 201), 100.0)
+        values[:, 110] = 112
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        report = self.engine().run()
+        product = report['products'][1]
+        count = gdal.Open(product['paths']['count']).ReadAsArray()
+        hub = gdal.Open(product['paths']['hub']).ReadAsArray()
+        self.assertTrue(((count == 1) & (hub == 0)).any())
+
+    def test_optional_roads_buildings_and_observers_produce_context_layers(self):
+        road = QgsVectorLayer('LineString?crs=EPSG:2180', 'drogi', 'memory')
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromWkt('LINESTRING (40 100, 140 100)'))
+        road.dataProvider().addFeatures([feature])
+        building = layer_for([(60, 110, 70, 120)])
+        contexts = {'drogi': (QgsVectorLayerFeatureSource(road), road.crs()),
+                    'zabudowa': (QgsVectorLayerFeatureSource(building), building.crs()),
+                    'obserwatorzy': (QgsVectorLayerFeatureSource(self.layer), self.layer.crs())}
+        report = self.engine(contexts).run()
+        self.assertEqual(report['state'], 'completed', report.get('fatal_error'))
+        self.assertEqual(len(report['context_summary']), 6)
+        from osgeo import ogr
+        dataset = ogr.Open(report['gpkg'])
+        self.assertGreaterEqual(dataset.GetLayerByName('drogi_NMPT').GetFeatureCount(), 2)
+        self.assertEqual(dataset.GetLayerByName('zabudowa_NMPT').GetFeatureCount(), 1)
+        self.assertEqual(dataset.GetLayerByName('obserwatorzy_NMPT').GetFeatureCount(), 1)
+        dataset = None
+
+    def test_atlas_layout_pdf_png_html_and_project_layers(self):
+        from nmt_nmpt_downloader.atlas_presentation import add_atlas, export_atlas
+        report = self.engine().run()
+        self.assertEqual(report['state'], 'completed', report.get('fatal_error'))
+        layers = add_atlas(report)
+        self.assertIn('NMPT/count', layers)
+        presentation = export_atlas(report, layers)
+        self.assertEqual(presentation['pdf_status'], 0, presentation)
+        self.assertEqual(presentation['image_status'], 0, presentation)
+        self.assertEqual(len(presentation['png']), 2)
+        self.assertTrue(Path(presentation['html']).is_file())
+        self.assertGreater(Path(presentation['pdf']).stat().st_size, 10000)
+
+    def test_unified_ui_observers_empty_and_one_menu_action(self):
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from qgis.gui import QgsMapCanvas
+        from nmt_nmpt_downloader.plugin import TerrainPlugin
+        window = QMainWindow()
+        canvas = QgsMapCanvas()
+        QgsProject.instance().addMapLayer(self.layer)
+        actions = []
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(inner): return self.layer
+            def mapCanvas(self): return canvas
+            def addPluginToMenu(self, menu, action): actions.append(action)
+            def addToolBarIcon(self, *args): pass
+            def removePluginMenu(self, *args): pass
+            def removeToolBarIcon(self, *args): pass
+        plugin = TerrainPlugin(Iface())
+        try:
+            plugin.initGui()
+            plugin.open()
+            self.assertEqual(len(actions), 1)
+            view = plugin.dialog
+            self.assertTrue(all(c.currentLayer() is None for c in view.context_layers.values()))
+            for resource, panel in view.panels.items():
+                panel.analysis_radius.setValue(50)
+                panel.step.setCurrentText('2')
+                panel.folder.edit.setText(self.config['folders'][resource])
+            view.report_folder.edit.setText(self.config['report_folder'])
+            layer, options, contexts = view.options()
+            self.assertEqual(contexts, {})
+            self.assertEqual(len(options['models']), 2)
+            self.assertNotIn('receivers_ids', options)
+            plugin.open_visibility()
+            self.assertIs(view, plugin.dialog)
+            self.assertIsNone(plugin.visibility_dialog)
+        finally:
+            plugin.unload()
+            plugin.dialog.deleteLater()
+            canvas.deleteLater()
 
 
 if __name__ == '__main__':

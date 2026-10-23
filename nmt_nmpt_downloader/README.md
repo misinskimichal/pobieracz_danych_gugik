@@ -1,97 +1,50 @@
-# NMT i NMTP ściągacz — 1.2.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.0.0
 
-Wtyczka QGIS 3.28–3.x do pobierania numerycznych NMT i NMPT dla bufora wokół obiektów warstwy oraz analizy widoczności turbin z pokryciem NMPT. Wynik: GeoTIFF Float32, linie widzenia GeoPackage i raporty. Działa niezależnie od oryginalnego „Pobieracza danych GUGiK”. Domyślnie w oknie pobierania zaznaczone jest samo NMPT; NMT można włączyć osobno.
+Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
-## Instalacja i aktualizacja
+## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → wybierz `NMT i NMTP ściągacz-1.2.0.zip`. Nie rozpakowuj pliku. Przy aktualizacji zamknij poprzednie zadania pobierania i uruchom ponownie QGIS, aby wymienić załadowane moduły. W razie potrzeby odinstaluj poprzednią wersję wtyczki i zainstaluj nowy ZIP. Pobrane dane i raporty nie są usuwane.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.0.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
-Sprawdzono QGIS 3.40.6 / Qt5 / Python 3.13 / Linux. Windows i macOS nie są tutaj dostępne do testów; podstawowe pobieranie wersji 1.0 działało w dostarczonym przez użytkownika raporcie z Windows. QGIS 4 nie jest obsługiwany. Potrzebne są biblioteki standardowej instalacji QGIS: GDAL/OGR, NumPy, lxml i requests. Nie instaluj `qgis` przez pip.
+QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
-## Nowe: widoczność turbin z NMPT
+## Atlas krok po kroku
 
-Otwórz przycisk **Nowe: analiza widoczności turbin z NMPT…** w głównym oknie albo menu **Wtyczki → NMT i NMTP ściągacz → Widoczność turbin — NMPT**.
+1. Otwórz wtyczkę. Pozostaw tryb **Pobierz potrzebne dane i utwórz atlas widoczności**.
+2. Wybierz punktową warstwę turbin, opcjonalnie tylko zaznaczone obiekty. Podaj wysokość piasty nad gruntem i średnicę wirnika albo pola z wartościami w metrach. Puste pole oznacza stałą wartość z lewej.
+3. Ustaw oko w otoczeniu, domyślnie 1,7 m ponad gruntem NMT. Mapa odpowiada, skąd widać turbinę na właściwej wysokości; nie jest widokiem z gruntu pod turbiną.
+4. NMT i NMPT włączasz osobno. Każdy ma własny **promień koła** i **krok mapy [m]**. Domyślnie NMT 20000 m / 10 m, NMPT 1000 m / 1 m. NMPT może mieć np. 650, 1000, 1500 m lub własną wartość; krok od 0,5 m. NMT ustala też poziom gruntu dla NMPT, nawet gdy wyłączysz mapę NMT.
+5. Ustaw foldery NMT, NMPT i atlasów tylko raz. Można użyć danych poprzedniej wersji. Ustawienia źródeł po rozwinięciu pozwalają wybrać preferowany piksel danych, tryb ścisły i układ wysokościowy każdego modelu.
+6. **Ważne miejsca z projektu** są opcjonalne: drogi, zabudowa/działki i obserwatorzy. Bez nich nadal powstaną pełne mapy kół. Służą do oceny ekspozycji i prezentacji; wysokości przeszkód pochodzą z modeli, nie z samego obrysu działki.
+7. Automatyczne pobieranie wybiera dostępne dane i ponownie używa zgodnych kafli. Odznacz je dla pracy tylko na lokalnych folderach. Na pierwszą próbę wybierz jedną turbinę i małe koła, np. NMT 1000 m / 5 m i NMPT 650 m / 1 m, szczególnie bez cache.
+8. Kliknij **Utwórz atlas widoczności**. Postęp obejmuje pliki, MB, prędkość, szacowane pozostałe MB/ETA, bieżącą turbinę i wysokość wirnika. **Ukryj** pozwala pracować dalej. **Anuluj** zachowuje ukończone pliki; aktywne połączenie może czekać do 90 s.
+9. Po zakończeniu atlas pojawi się w projekcie, jeśli pozostawisz tę opcję. Domyślnie widoczny jest NMPT; przełącz grupę na NMT do porównania. W grupie jest też początkowo wyłączona warstwa zakresu widocznego wirnika. Opcjonalny PDF/PNG/HTML zawiera stronę każdego modelu, legendę, skalę, granice i podsumowanie. Korzysta z widocznych podkładów projektu, np. ortofotomapy; bez nich z cieniowania terenu.
 
-1. Wybierz punktową warstwę turbin. Podaj wysokość piasty i średnicę wirnika w metrach albo odpowiednie pola atrybutów. Wybierz piastę lub najwyższy punkt zasięgu łopaty.
-2. Wskaż obserwatorów: punkty albo poligony zabudowy / działek. Z poligonu powstaje jeden punkt wewnętrzny, a nie analiza całej powierzchni. Dla budynku zalecany jest własny punkt na zewnątrz; punkt wewnątrz dachu NMPT zostanie oznaczony jako niejednoznaczny.
-3. Ustaw odległość od turbiny, domyślnie 20000 m, i wysokość oka, domyślnie 1,7 m ponad gruntem **NMT**, nie dachem NMPT.
-4. **Uwzględnij NMPT** jest domyślnie włączone. Tryb lokalny używa NMPT wokół obserwatorów i turbin, domyślnie 1000 m; dostępne 650 / 1000 / 1500 m i własna dodatnia wartość. Możesz wybrać tylko obserwatorów / tylko turbiny. To promień dysku, nie pierścień.
-5. **NMPT na całej linii** sprawdza pokrycie całej trasy, za cenę większego transferu. W trybie lokalnym brak przeszkody daje tylko wynik **potencjalnie widoczna**, gdy środkowej części trasy nie sprawdzono na NMPT.
-6. Wskaż osobne foldery NMPT, pomocniczego NMT i wyników. Użyj jednego układu wysokościowego. Włączone automatyczne pobieranie wybiera najlepszy dostępny piksel źródłowy i tylko potrzebne korytarze linii (bufor 2 m NMPT / 5 m NMT + pełne kafle), korzystając ze zgodnych plików na dysku. Nie pobiera całych kół 20 km. Odznacz pobieranie, aby analizować wyłącznie lokalne foldery.
-7. Kliknij **Analizuj widoczność z NMPT**, a po zakończeniu **Pokaż wyniki na mapie**. GeoPackage zawiera kolorowe linie i punkty; tabela wskazuje stan i powód. Raporty i CSV pozostają na dysku.
+## Znaczenie map
 
-**Znaczenie wyniku:** czerwony — przeszkoda NMPT, brązowy — teren; zielony — brak przeszkód w pełnym sprawdzonym modelu; żółty — wynik potencjalny przy lokalnym NMPT; fioletowy — brak wymaganych danych; różowy — niejednoznaczna geometria / linia graniczna; szary — poza promieniem. Sam teren bez NMPT ma odrębną kategorię. Znana przeszkoda może potwierdzić przesłonięcie pomimo braków dalej na trasie.
+- **Ile turbin widać:** liczba turbin, dla których widoczny jest najwyższy punkt zasięgu łopaty; 0 to brak potwierdzonej widoczności, 65535 poza analizą.
+- **Zakres wirnika:** brak / górny zasięg łopaty / także piasta / także dolny zasięg / nierozstrzygnięte. To trzy punkty, nie procent widocznej powierzchni łopat.
+- **Jakość:** niepewna trasa, brak danych w miejscu obserwacji, oko pod dachem/koroną albo model kompletny. Przy niepewności liczba potwierdzonych turbin jest dolnym ograniczeniem.
+- **Drogi:** odcinki do 50 m pokolorowane według udziału próbek z widocznością. **Zabudowa/działki:** próbki obrysu odsuniętego o 2 m, aby nie badać punktu pod dachem. **Obserwatorzy:** próbki geometrii. Nie jest to ocena każdego miejsca elewacji lub działki.
 
-Obliczenia działają w tle. Sprawdzane są wszystkie dodatniej długości odcinki przecięcia linii z komórkami rastra, również oba boki przy przebiegu wzdłuż granicy siatki. Odczyt bloków i otwarte pliki mają ograniczone cache. Domyślnie włączona jest krzywizna Ziemi z refrakcją optyczną k=1/7. Próg wysokości 0,25 m wyodrębnia wyniki graniczne; nie oznacza dokładności danych. Limit wynosi 20000 par na zadanie, licząc także pary poza promieniem; dla dużych warstw stosuj zaznaczenie.
+Braki nie są znanym terenem o wysokości 0 i nie zatrzymują pozostałych kół. NMPT jest nieprzezroczystym modelem górnej powierzchni 2,5D; nie opisuje prześwitów pod koronami ani brył 3D. NMT nie uwzględnia drzew i zabudowy. Modele są oddzielnymi produktami.
 
-Obsługiwane są lokalne rastry w EPSG:2180, północ u góry, z rozpoznanym zasobem i układem wysokościowym, w szczególności pliki z tej wtyczki. Inne rastry nie są automatycznie domyślane ani przeliczane. Wygrywa najdrobniejszy dostępny ważny piksel w jednym układzie. Metadane i przyczyny odrzucenia plików są w JSON. Starsze pliki wtyczki z błędem zaokrąglenia georeferencji do 1 mm są wyrównywane do deklarowanej siatki; zachowywana jest też oryginalna georeferencja w raporcie. Nowe GeoTIFF-y zapisują dokładną siatkę żądania WCS.
+## Pliki i wydajność
 
-Wyniki: `widocznosc_DATA_ID/widocznosc.gpkg`, `wyniki.csv`, `report.json`, `report.md`, `events.jsonl`; dodatkowo raporty pobierania NMT / NMPT. Punkty końców są identyfikowane przez ID obiektów z chwili uruchomienia. NMPT jest nieprzezroczystą powierzchnią **2,5D**: korona drzewa i dach są przeszkodą. Analiza pojedynczego punktu turbiny nie mierzy udziału widocznego wirnika. Pełna scena 3D, ray tracing siatek oraz rastrowa mapa widoczności każdego miejsca w promieniu pozostają dalszym etapem.
+`atlas_DATA_ID/`: `atlas.gpkg`, `ekspozycja.csv`, `report.json`, `report.md`, `events.jsonl`, podfoldery NMT/NMPT z GeoTIFF i stylami QML. Po eksporcie także `atlas.pdf`, `atlas.png` / `atlas_2.png`, `atlas.html`. Zachowaj cały folder dla HTML bez internetu. Raporty transferów mają własne podfoldery.
 
-## Ustawienia obszaru
+Rastry: `count.tif`, `hub.tif`, `bottom.tif`, `unknown.tif`, `scope.tif`, `rotor.tif`, `quality.tif`, opcjonalnie `hillshade.tif`. Indeksy obserwują źródłowe foldery. Zmiana danych nie przelicza samoczynnie zakończonego atlasu — uruchom nowe zadanie.
 
-Wybierz warstwę wektorową, opcjonalnie **Tylko zaznaczone obiekty**, i promień w metrach. Dla 20 km wpisz **20000**. Bufor powstaje wokół geometrii, nie centroidu, po przeliczeniu do EPSG:2180. Dla punktów i linii promień musi być większy od zera. Nakładające się bufory nie powodują pobierania duplikatów kafli. Każdy plik obejmuje pełny kafel, także poza buforem przy jego granicy.
+Krok mapy jest niezależny od piksela źródłowego. Przy większym kroku przeszkody agregowane są maksimum, aby nie uśrednić dachów i grzbietów. Źródło może być znacznie większe od wyniku. Interfejs pokazuje orientacyjny transfer; NMPT 20 km przy 0,5 m to bardzo duży obszar. Transfer jest strumieniowy, kafle deduplikowane, turbiny analizowane kolejno, wyniki zbiorcze zapisywane blokami. Limity ochronne: 40 mln komórek na koło, 400 mln w rastrze zbiorczym i 1000 turbin na zadanie. To limity, nie gwarancja szybkiego wykonania największego zadania.
 
-## Osobne rozdzielczości NMT i NMPT
+GDAL korzysta z wzajemności linii widzenia, rzeczywistej wysokości turbiny i oka nad NMT. Domyślnie uwzględnia krzywiznę i refrakcję 6/7. Braki są analizowane w wariancie optymistycznym i pesymistycznym; rozbieżność daje niepewność. Maska jakości zachowuje także małe dziury NoData po zmianie kroku. Nie ma automatycznej transformacji EVRF2007 ↔ KRON86; analiza NMPT używa NMT w tym samym pionie, bez cichego zamiennika.
 
-Każdy zasób ma własny folder, preferowany piksel, checkbox **Tylko wybrana rozdzielczość**, układ wysokościowy i zgodę na użycie drugiego układu.
+## Samo pobieranie
 
-**Sprawdź dostępne rozdzielczości i układy** odpytuje DescribeCoverage WCS i aktualizuje listy wariantów. Można także wpisać preferowaną wartość w metrach. Dostępność jest sprawdzana ponownie przy pobieraniu. Przykładowo: NMT 1 m, NMPT 0,5 m w EVRF2007. Są to rozdzielczości źródłowe podane przez usługę, a nie nowe pomiary wygenerowane przez przeliczenie rastra.
+Przełącz tryb na **Tylko pobierz NMT / NMPT dla bufora warstwy**. Wskaż dowolną warstwę wektorową, bufor, zasoby i foldery w tym samym oknie. Każdy zasób ma preferowany piksel źródłowy, najbliższy dostępny zamiennik / tryb ścisły i układ wysokościowy. Drugi układ można dopuścić w tym trybie; nie oznacza to transformacji. Po pobraniu można dodać rastry; indeksy folderów reagują na dodanie/usunięcie plików.
 
-- Bez **Tylko wybrana** wtyczka wybiera dostępny wariant o najmniejszej różnicy względem preferencji; przy remisie wybiera drobniejszy piksel. Gdy wybrany wariant ma braki lub błąd, sprawdza kolejne dostępne warianty.
-- Z **Tylko wybrana** dopuszczana jest wyłącznie dokładnie taka rozdzielczość; jeśli jej nie ma, odpowiedni kafel/zadanie zasobu trafia do raportu jako niedostępny. Drugi zasób może działać dalej.
-- **Źródłowa — najlepsza dostępna** preferuje najmniejszy dostępny piksel w wybranym układzie wysokościowym.
-- Ustawienie 2 m w wersji 1.0 oznaczało przeliczenie siatki, nie osobny produkt źródłowy. W wersji 1.1 preferencja 2 m przy dostępnych źródłach 1 m i 5 m wybierze 1 m, chyba że włączysz tryb ścisły. Może to zwiększyć transfer względem starego przeliczenia na 2 m.
-- Dodatkowy endpoint NMT GRID5 jest sprawdzany, ale jeżeli zwraca błąd lub odmowę dostępu, nie jest przedstawiany jako dostępny. Jego niedostępność nie blokuje publicznych wariantów GRID1. Nie są wymagane nowe hasła.
+WCS GUGiK dostarcza numeryczny ASCII, lokalnie kompresowany do GeoTIFF Float32 w EPSG:2180. Sprawdzone TIFF-y tych usług zwracały Byte, dlatego nie zastępują numerycznych wysokości. Cache sprawdza żądanie i odczyt; nie rozpoznaje sam nowszej epoki źródła.
 
-Faktyczny piksel jest zapisywany w nazwie rastra, indeksie i raporcie. Jeśli warianty mają różne rozdzielczości, siatka przestrzenna kafli jest wyrównywana do ich wspólnego kroku; liczba pikseli kafla może się nieznacznie zmienić.
+Kod: `workspace_dialog.py` — jedyny formularz; `atlas.py` — koła i rastry; `atlas_context.py` — ekspozycja; `atlas_presentation.py` — style i eksport; `engine.py`/`core.py`/`catalog.py` — transfer; `coverage.py` — indeksy. Starsze moduły linii pozostają pomocniczo w kodzie, lecz ich okno nie jest rejestrowane w menu.
 
-## Osobne układy wysokościowe
-
-Domyślnie każdy zasób preferuje **PL-EVRF2007-NH**. To domyślny wybór tej wtyczki dla współczesnych danych; dostępność konkretnego produktu/obszaru jest sprawdzana, a nie zakładana. Można oddzielnie wybrać **PL-KRON86-NH** dla NMT i NMPT.
-
-Checkbox **Przy brakach sprawdź też drugi układ** jest domyślnie wyłączony. Po jego włączeniu najpierw sprawdzane są warianty preferowanego układu, a następnie drugiego. W razie częściowego pokrycia wtyczka zachowuje poprawne pliki i wybiera do podsumowania wariant z największym pokryciem. Zamienniki, ich rozdzielczość, rzeczywisty układ i wszystkie zachowane pliki są zapisane w `alternatives` / `files` w JSON.
-
-**Wtyczka nie przelicza wysokości pomiędzy EVRF2007 i KRON86 i nie scala ich w jeden model.** Różne układy pozostają w oddzielnych plikach z oznaczeniem w nazwie i metadanych; indeks ma pole `uklad_wys`. Jeśli potrzebujesz jednorodnego modelu wysokościowego, nie dopuszczaj drugiego układu lub przelicz wysokości właściwą metodą poza wtyczką. Na granicy kafli z różnych wariantów mogą wystąpić różnice wysokości lub czasu pomiaru; dostępność nie stanowi dowodu zgodności modeli.
-
-## Pobieranie i pokazywanie na mapie
-
-Ustaw różne foldery NMT i NMPT oraz folder raportów. Kliknij **Pobierz**. Przetwarzanie działa w tle: etap, postęp kafli, aktywne transfery, MB, prędkość średnia i szacunkowe ETA. MB = 1 000 000 bajtów. Pozostałe MB i ETA są szacowane na podstawie zakończonych transferów, a licznik pobranych bajtów obejmuje ponowienia. Przy alternatywnych wariantach szacunki mogą się zmienić.
-
-Po pobraniu kliknij **Pokaż pobrane rastry na mapie**. Dodaje to poprawnie zapisane i ponownie użyte rastry do grup **Rastry NMT** i **Rastry NMPT**; ścieżki już obecne w projekcie nie są dodawane ponownie. Widok jest ustawiany na obszar wyników. Pliki są dodawane partiami, aby QGIS zachował responsywność. Bez kliknięcia rastry nie są automatycznie dodawane.
-
-**Ukryj** nie przerywa pobierania. **Anuluj** zachowuje ukończone pliki i raport. Aktywne połączenie może czekać do 90 s na dane. Domyślnie pobierane są dwa kafle naraz; można wybrać 1–4 pobrania i 512/1024/2048 pikseli kafla. Duży obszar i małe piksele oznaczają miliardy wartości; transfer numerycznego ASCII jest większy niż rozmiar skompresowanych GeoTIFF-ów.
-
-## Automatyczne indeksy pobranych kafli
-
-Po rozpoczęciu pobierania powstają **Pobrane kafle NMT** i **Pobrane kafle NMPT**. Można utworzyć je także bez pobierania przez **Pokaż / odśwież indeksy folderów**, wskazując istniejące foldery.
-
-- Trwałe indeksy GeoPackage znajdują się w folderach danych: `.nmt_nmpt_index_NMT.gpkg` i `.nmt_nmpt_index_NMPT.gpkg`. Nie usuwaj ich, jeżeli mają być częścią zapisanego projektu.
-- Warstwy pokazują obrysy rzeczywistych plików. Tabela zawiera nazwę i ścieżkę, zasób, piksel w metrach, rzeczywisty układ wysokościowy i MB. Obrys oznacza plik na dysku, nie gwarantuje pełnego pokrycia ważnymi pikselami; dokładne braki są w maskach raportu.
-- Obserwacja folderu wykrywa dodanie/usunięcie pliku; aktualizacja jest grupowana z opóźnieniem około 0,75 s. Dodatkowy skan co 15 s wykrywa podmiany plików, także bez zdarzenia systemowego. Sieciowe dyski mogą zgłaszać zdarzenia z opóźnieniem.
-- Skan działa w tle, czyta tylko nagłówki nowych/zmienionych rastrów i nie wczytuje wszystkich pikseli. Geometrie indeksu są aktualizowane przyrostowo.
-- Po zapisaniu i ponownym otwarciu projektu synchronizacja wznawia się, gdy wtyczka jest włączona. Po wyłączeniu wtyczki zachowane warstwy indeksów nadal można oglądać, ale nie są synchronizowane. Usunięcie warstwy indeksu z projektu zatrzymuje jej obserwację; przycisk może ją ponownie dodać.
-- Uwzględniane są pliki `.tif`, `.tiff` i `.asc` bezpośrednio w wybranym folderze, również pobrane wersją 1.0. Podfoldery i tymczasowe pliki są pomijane. Raster musi mieć czytelną georeferencję i CRS. Problemy skanowania są w panelu komunikatów QGIS, zakładka „NMT / NMPT — indeks”.
-
-## Odporność i raporty
-
-Gotowe pliki są zapisywane atomowo po kontroli odczytu, wymiarów i georeferencji; transfery są strumieniowe, a TLS pozostaje weryfikowany. Prawidłowe istniejące pliki o zgodnej sygnaturze są ponownie używane. Wyłącz pomijanie istniejących plików, aby odświeżyć dane opublikowane przez GUGiK. Obce/niespójne pliki nie są nadpisywane. Blokada `.nmt_nmpt_downloader.lock` chroni folder przed drugim zadaniem; po awarii usuń ją dopiero po upewnieniu się, że żadne pobieranie nie działa.
-
-Każde uruchomienie tworzy `raport_DATA_ID`:
-
-- `report.md`: podsumowanie, braki i zamienniki.
-- `report.json`: ustawienia per zasób, rozpoznany katalog WCS i błędy jego odpytywania, każdy kafel, warianty, faktyczny piksel/układ, zachowane pliki i liczniki transferu. BBOX ma kolejność xmin/ymin/xmax/ymax w EPSG:2180.
-- `events.jsonl`: bieżący dziennik zdarzeń.
-- `obszar.geojson`: bufory w EPSG:4326.
-- `obszary_problemowe.geojson`: obszary diagnostyczne kafli z brakami/błędami/anulowaniem, nie dokładne granice dziur.
-- `masks/*_braki.tif`: maski dokładnych braków NoData wewnątrz żądanego obszaru; 1 = brak, 0 = poza brakami, EPSG:2180. Liczone są środki pikseli.
-
-Brak danych lub błąd kafla nie przerywa pozostałych pobrań. `missing` oznacza NoData; `failed` oznacza niezweryfikowany obszar z powodu błędu, nie dowiedziony brak danych. Powód usługi jest zachowywany bez wymyślania przyczyn. Stany `downloaded`, `reused`, `partial`, `canceled` i `outside_pixels` opisują pobrane, ponownie użyte, częściowe, anulowane i obszary mniejsze od piksela. Maksymalnie trzy próby na wariant; trwałe HTTP 4xx poza 408/429 nie są ponawiane.
-
-## Źródła, kod i walidacja
-
-WCS GRID1: `https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/GRID1/WCS/DigitalTerrainModel` i `https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMPT/GRID1/WCS/DigitalSurfaceModel`; dodatkowy katalog NMT GRID5 jest sprawdzany pod analogiczną ścieżką GRID5. Zasoby `DTM_PL-…` i `DSM_PL-…`. Pobierany jest numeryczny `image/x-aaigrid` WCS 1.0.0 i lokalnie konwertowany do GeoTIFF Float32; testowane `image/tiff` WCS 2.0.1 zwracało Byte, więc nie używamy go do wysokości. Brak wyboru roku/archiwalnego arkusza.
-
-Kod: `core.py` — geometrie/rastry; `catalog.py` — wybór wariantu; `engine.py` — transfery/raporty; `coverage.py` — indeksy/synchronizacja/mapa; `plugin.py` — UI i QgsTask; `visibility.py` — model i linie widzenia; `visibility_dialog.py` — formularz analizy i prezentacja. Testy: `tests_nmt_nmpt/test_downloader.py` w repozytorium. Testy sprawdzają m.in. osobne ustawienia, najbliższą/ścisłą rozdzielczość, drugi układ, zgodne zasięgi wariantów, NoData, HTTP 503/404, cache, anulowanie, dopisywanie/usuwanie/podmianę kafli, dodawanie rastrów oraz odtworzenie synchronizacji po zapisaniu projektu. Nowe testy sprawdzają także NMPT, brakujące dane, krzywiznę, piastę / koniec łopaty, cache blokowy i pliki wynikowe; łącznie 39 testów przechodzi. Małe rzeczywiste żądania NMT 1 m i NMPT 0,5 m także zweryfikowano; pełnego obszaru 20 km nie pobierano.
-
-Licencja: GPL-3.0, plik `LICENSE`.
+Licencja GPL-3.0. Pełna instrukcja i walidacja: `docs/Instrukcja_ATLAS_2.0.0.md` w repozytorium.

@@ -1,12 +1,12 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 1.2.0; podstawy pobierania opisano od wydania 1.1.0.
+**Bieżąca wersja wtyczki:** 2.0.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
 **Skróty:** NMT = model samego terenu, NMPT = model górnej powierzchni terenu, roślinności i zabudowy. Pisownia „NMTP” pozostaje częścią zamówionej nazwy produktu; techniczny skrót zasobu to „NMPT”.
 
-Dokument opisuje działającą implementację i osobno proponowane rozszerzenia. **Wersja 1.2.0 dodaje rzeczywistą analizę linii widzenia z NMPT** — stan wdrożenia opisuje suplement F i [instrukcja 1.2.0](Instrukcja_NMPT_1.2.0.md). Suplement E zachowuje szerszy plan, w tym przyszłe pełne 3D. Pozostałe przykłady biznesowe i prototypy nie stają się automatycznie funkcjami wtyczki.
+Dokument opisuje działającą implementację i osobno proponowane rozszerzenia. **Wersja 2.0.0 dodaje atlas pełnych kół NMT/NMPT w jednym formularzu, z opcjonalnymi obserwatorami, drogami i zabudową** — patrz suplement G i [instrukcja 2.0.0](Instrukcja_ATLAS_2.0.0.md). Punktowy moduł z wydania 1.2.0 opisany w F jest etapem historycznym. Suplement E zachowuje szerszy plan, w tym przyszłe pełne 3D. Pozostałe przykłady biznesowe i prototypy nie stają się automatycznie funkcjami wtyczki.
 
 ## Spis treści
 
@@ -23,7 +23,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 11. Suplement D: plan rozwoju produktu i granice obecnej wersji.
 12. Suplement E: plan widoczności turbin — NMT, lokalne NMPT i 3D.
 13. Suplement F: wdrożona wersja 1.2.0 z priorytetem NMPT.
-14. Bibliografia.
+14. Suplement G: atlas pełnych kół 2.0.0 i ekspozycja otoczenia.
+15. Bibliografia.
 
 ## 1. Czy ostatnie pobieranie poszło poprawnie?
 
@@ -54,6 +55,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Co potwierdza ten audyt?** Spójność przebiegu i wyników zgłoszonych przez wtyczkę. Same pliki GeoTIFF, indeksy GeoPackage ani projekt QGIS nie były dołączone, więc niezależnie nie odczytano ich pikseli ani nie potwierdzono działania widoku mapy na tym komputerze. Nie wynika z tego także dokładność geodezyjna, aktualność wszystkich pomiarów czy kompletność bardzo wąskich obiektów, np. przewodów.
 
 ## 2. Funkcjonalność i instrukcja użytkowania
+
+Opis podstaw pobierania poniżej powstał dla 1.1 / 1.2. **Aktualny jeden formularz, koła bez obserwatorów i prezentację 2.0 opisuje [nowa instrukcja](Instrukcja_ATLAS_2.0.0.md)**. Nie trzeba otwierać drugiego okna ani wybierać odbiorców.
 
 W oknie pobierania 1.2.0 domyślnie zaznaczone jest **samo NMPT**. NMT można włączyć osobno. Nowa analiza widoczności domyślnie uwzględnia NMPT, a NMT służy pomocniczo do poziomu gruntu i kontroli terenu; patrz suplement F.
 
@@ -117,6 +120,10 @@ pobieracz_danych_gugik/
 │   ├── coverage.py       # indeksy folderów i dodawanie rastrów
 │   ├── visibility.py     # linie widzenia, odczyt blokowy NMT/NMPT i wyniki
 │   ├── visibility_dialog.py # formularz analizy i prezentacja w projekcie
+│   ├── workspace_dialog.py # jeden bieżący formularz 2.0
+│   ├── atlas.py          # mapy kół, kumulacja i jakość danych
+│   ├── atlas_context.py  # opcjonalna ekspozycja geometrii z projektu
+│   ├── atlas_presentation.py # style, layout PDF/PNG i HTML
 │   ├── icon.svg
 │   ├── README.md
 │   └── LICENSE
@@ -393,7 +400,7 @@ QT_QPA_PLATFORM=offscreen PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest
 
 W środowisku z katalogiem domowym tylko do odczytu ustaw także `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` i `XDG_DATA_HOME` na własne zapisywalne katalogi. W Windows uruchom testy w środowisku QGIS; składnia ustawiania zmiennych zależy od konsoli.
 
-Sprawdzona wersja 1.1.0 miała **18 testów zakończonych poprawnie**. Obejmują m.in. deduplikację, filtr zaznaczenia, bufor metryczny z EPSG:4326, dokładne i najbliższe warianty, fallback układu z zachowaniem zasięgu, NoData, XML błędu z HTTP 200, HTTP 503/404, ponowienia, cache, anulowanie, ochronę obcych plików, aktualizację indeksu po dodaniu/usunięciu/podmianie, zapis/odczyt projektu i cały przebieg GUI → pobranie → indeksy → mapa. **Bieżąca wersja 1.2.0 przechodzi 39 testów**, dodając przypadki widoczności NMPT, cache blokowego, automatycznego pozyskania danych, nowych wyników i GUI; szczegóły w F5.
+Sprawdzona wersja 1.1.0 miała **18 testów zakończonych poprawnie**. Obejmują m.in. deduplikację, filtr zaznaczenia, bufor metryczny z EPSG:4326, dokładne i najbliższe warianty, fallback układu z zachowaniem zasięgu, NoData, XML błędu z HTTP 200, HTTP 503/404, ponowienia, cache, anulowanie, ochronę obcych plików, aktualizację indeksu po dodaniu/usunięciu/podmianie, zapis/odczyt projektu i cały przebieg GUI → pobranie → indeksy → mapa. **Wydanie 1.2.0 sprawdzono 39 testami**, dodając przypadki widoczności NMPT, cache blokowego, automatycznego pozyskania danych, nowych wyników i GUI; szczegóły w F5. Wydanie 2.0.0 przechodzi 56 testów; aktualny zakres opisano w G.
 
 Lokalny serwer testowy zastępuje WCS. To pozwala deterministycznie sprawdzać awarie bez obciążania Geoportalu. Oddzielnie wykonano małe rzeczywiste pobrania obu modeli. Test użytkownika opisany w rozdziale 1 dostarcza dodatkowego dowodu działania pobierania na jego komputerze, ale nie zastępuje pełnej macierzy systemów i wersji QGIS.
 
@@ -442,7 +449,11 @@ Sprawdzenie CRC ZIP-a nie zastępuje uruchomienia wtyczki. Test dystrybucji powi
 
 QGIS → Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP. Przy aktualizacji zakończ zadania i zrestartuj QGIS, aby wyładować stare moduły. Foldery danych pozostają niezależne od folderu instalacji.
 
-[Bieżący ZIP 1.2.0 do pobrania](https://github.com/misinskimichal/pobieracz_danych_gugik/raw/refs/heads/codex/nmt-nmtp-sciagacz/releases/NMT%20i%20NMTP%20%C5%9Bci%C4%85gacz-1.2.0.zip).
+[Bieżący ZIP 2.0.0 do pobrania](https://github.com/misinskimichal/pobieracz_danych_gugik/raw/refs/heads/codex/nmt-nmtp-sciagacz/releases/NMT%20i%20NMTP%20%C5%9Bci%C4%85gacz-2.0.0.zip).
+
+SHA-256 ZIP-a **2.0.0**: `e18e496c0c8b9a8b7ed3b362d2299e4777be187d3370ae75379d2db2335cd882` (87324 bajty). Zweryfikowano tę paczkę przez loader QGIS, z jednym formularzem i jednym wpisem menu, pustymi opcjonalnymi obserwatorami i osobnymi zakresami obu modeli.
+
+[Archiwalny ZIP 1.2.0](https://github.com/misinskimichal/pobieracz_danych_gugik/raw/refs/heads/codex/nmt-nmtp-sciagacz/releases/NMT%20i%20NMTP%20%C5%9Bci%C4%85gacz-1.2.0.zip).
 
 SHA-256 ZIP-a **1.2.0**: `079ec828bb91389a6784d28ede3bbeb108176c9c248eb1729fb5a9414adf80d4` (63014 bajtów). Plik sumy jest zapisany obok ZIP-a w `releases/`. Odczytano dokładnie tę paczkę przez mechanizm ładowania QGIS, otwarto oba okna i sprawdzono domyślny wybór NMPT.
 
@@ -1552,6 +1563,8 @@ Dostępność tych materiałów potwierdzono w chwili opracowania. Nie wykonano 
 
 # Suplement F. Wdrożona wersja 1.2.0 — priorytet NMPT
 
+**Etap historyczny:** w 2.0.0 to okno zastąpiono wspólnym formularzem i mapami całych kół; obserwatorzy nie są już wymagani. Bieżący stan opisuje G i instrukcja 2.0.0.
+
 **Stan rzeczywisty:** kod i ZIP 1.2.0 zawierają nową analizę linii widzenia, włączającą NMPT domyślnie. W głównym pobieraniu domyślnie wybrane jest samo NMPT. Ten suplement aktualizuje wcześniejsze zapisy o braku modułu analiz; szerszy plan 3D z E pozostaje częściowo przyszły.
 
 ## F1. Instrukcja i pierwszy test
@@ -1613,6 +1626,49 @@ Braki nie są wysokością 0 i nie zatrzymują pozostałych par. Znana przeszkod
 Mały rzeczywisty test WCS w publicznym punkcie w Warszawie odczytał NMT 1 m i NMPT 0,5 m w EVRF2007 i zapisał wynik. Powtórzenie użyło istniejących kafli bez ponownego transferu danych. Punkt znajdujący się pod pokryciem NMPT oznaczono jako niejednoznaczny. To kontrola działania łańcucha danych; nie wykonano jeszcze walidacji terenowej prawdziwej farmy ani testów Windows/macOS.
 
 Wydanie realizuje **linie widzenia 2,5D**, nie pełną scenę 3D. NMPT jest nieprzezroczystą górną powierzchnią; nie opisuje prześwitów, wnętrza korony, sezonowości ani geometrii obracającego się wirnika. Sprawdzany jest pojedynczy punkt celu. Nie ma jeszcze mapy rastrowej dla każdego punktu otoczenia, procentu widocznego wirnika, ray tracingu siatek, sceny 3D ani próbkowania całych elewacji / działek. Są to dalsze zadania z E, a nie ukryte opcje 1.2.0.
+
+# Suplement G. Wersja 2.0.0 — atlas pełnych kół i ekspozycja otoczenia
+
+[Instrukcja użytkowania, algorytm, dane i przykłady](Instrukcja_ATLAS_2.0.0.md) · [Pobierz ZIP 2.0.0](https://github.com/misinskimichal/pobieracz_danych_gugik/raw/refs/heads/codex/nmt-nmtp-sciagacz/releases/NMT%20i%20NMTP%20%C5%9Bci%C4%85gacz-2.0.0.zip).
+
+## G1. Rzeczywista zmiana zakresu
+
+Zamiast dwóch formularzy i obowiązkowych par odbiorca–turbina istnieje **jeden formularz**. Podstawą jest koło wokół każdej turbiny: osobny promień i krok NMT oraz NMPT. Obserwatorzy, drogi i zabudowa z projektu są opcjonalnym kontekstem. Bez nich także powstają pełne mapy.
+
+Wynik odpowiada, skąd w otoczeniu widać turbinę na odpowiedniej wysokości. Nie analizuje obserwatora na gruncie pod turbiną. Wzajemność linii widzenia pozwala GDAL obliczać mapę od strony punktu turbiny na jej rzeczywistej wysokości i porównywać z okiem nad NMT w każdej komórce otoczenia.
+
+Domyślnie NMT ma promień 20 km / krok 10 m, a NMPT 1 km / krok 1 m, z własnymi wartościami i krokiem od 0,5 m. Do pierwszego testu bez cache zalecany jest mniejszy NMT, np. 1 km, i NMPT 650 m. Krok wynikowy nie zastępuje rozdzielczości źródła ani jego transferu; interfejs pokazuje szacunek przed startem.
+
+## G2. Mapy i ważne miejsca
+
+- Liczba turbin, których najwyższy punkt łopaty jest widoczny, z uwzględnieniem kół każdej turbiny.
+- Osobne wyniki dla piast i dolnego zasięgu wirnika oraz mapa trzech poziomów widocznego fragmentu. Nie jest to procent widocznej powierzchni wirnika.
+- Nakładka niepewności danych i pozycji oka pod dachem/koroną.
+- Drogi w odcinkach do 50 m, obrysy zabudowy/działek odsunięte o 2 m i opcjonalni obserwatorzy, z ekspozycją wyznaczoną na próbkach.
+- Warstwy i style w QGIS, osobne strony modeli w PDF/PNG, skala, legenda, północ, koła i podsumowania oraz lokalny atlas HTML. Widoczne podkłady projektu mogą być użyte w eksporcie; bez nich działa cieniowanie.
+
+Domyślnie na mapie włączony jest NMPT, a NMT dostępny do przełączenia, aby kolorów odmiennych modeli nie czytać jako jednego wyniku. Atlas używa symboli turbin oraz obramowania dróg dla czytelności na podkładzie. Przykłady w instrukcji są faktycznymi eksportami algorytmu, lecz dane demonstracyjne są w całości syntetyczne. Dane użytkownika nie trafiły do paczki ani przykładów.
+
+## G3. Kod i uzasadnienie
+
+| Moduł | Odpowiedzialność | Decyzja |
+|---|---|---|
+| `workspace_dialog.py` | Jedyny formularz i `AtlasTask` | Wspólne foldery/źródła, osobne ustawienia map, brak wymuszonych odbiorców |
+| `atlas.py` | Koła, mozaiki, trzy wysokości, maski, kumulacja | GDAL raster viewshed zamiast milionów niezależnych profili Python |
+| `ModelSources` | Wirtualne mozaiki, maski jakości, agregacja | Maksimum przeszkód i minimum ważności zachowują dachy i małe NoData |
+| `Product` | Dyskowe rastry liczników i jakości | Kolejne lokalne okna nie wymagają pełnej globalnej tablicy w RAM |
+| `atlas_context.py` | Próbki ważnych geometrii | Ocena miejsc istotnych dla odbiorcy, bez obowiązku ich wskazywania |
+| `atlas_presentation.py` | Style, layout, PDF/PNG/HTML | Powtarzalna czytelna prezentacja zamiast samej tabeli par |
+
+Minimalna bezwzględna wysokość GDAL jest porównywana z okiem nad gruntem NMT, co pozwala uniknąć oka na dachu DSM. Standardowa refrakcja/krzywizna ma współczynnik 6/7. Braki są badane przez dwa modele skrajne, a rozbieżność daje niepewność zamiast fikcyjnego terenu o wysokości 0. Maski są agregowane z osobnym znacznikiem 255: wartość 0 pozostaje rzeczywistym brakiem i nie jest ignorowana przez resampling. Obliczeniowy offset Float64 chroni przed zerowym obcięciem GDAL dla wysokości poniżej poziomu morza; po obliczeniu jest odejmowany.
+
+Limity ochronne to 40 mln komórek na lokalne koło, 400 mln w rastrze zbiorczym i 1000 turbin. Przekroczenie jest wykrywane przed pobieraniem. Skan źródeł i odczyt są blokowe, turbiny liczone kolejno, wyniki mają piramidy. Duża siatka i pobranie natywnego NMPT nadal mogą wymagać znacznych zasobów. Pion nie jest automatycznie transformowany; NMPT i pomocniczy NMT wewnątrz danego produktu używają tego samego układu.
+
+## G4. Walidacja i granice
+
+Wydanie przechodzi **56 testów**, obejmujących dawne pobieranie i nowe koła bez obserwatorów, niezależne kroki, cienie NMPT, nakładanie turbin, braki i ich propagację, małe dziury po agregacji, poziomy poniżej morza, trzy wysokości, kontekst geometrii, kontynuowanie po błędzie koła, anulowanie, limity przed siecią, pliki i prezentację oraz cały nowy formularz z zadaniem w tle. Sprawdzono Flake8/Bandit i gotowy ZIP w mechanizmie ładowania QGIS. Testowe środowisko to QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux; Windows/macOS i terenowa walidacja farmy pozostają poza tą kontrolą.
+
+To mapa rastrowa 2,5D. Pełna geometria siatek 3D, prześwity pod koronami, sezonowość, animacja wirnika i jego widoczna powierzchnia nadal wymagają kolejnego modułu. Liczba potwierdzonych turbin przy brakach danych jest dolnym ograniczeniem. Wyjściowy atlas nie przelicza się sam po zmianie źródeł; należy uruchomić nowe zadanie.
 
 # Źródła i punkty odniesienia
 

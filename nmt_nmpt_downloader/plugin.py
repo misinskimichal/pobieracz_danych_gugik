@@ -473,24 +473,17 @@ class TerrainPlugin:
         self.action.triggered.connect(self.open)
         self.iface.addPluginToMenu(PLUGIN_NAME, self.action)
         self.iface.addToolBarIcon(self.action)
-        self.visibility_action = QAction('Widoczność turbin — NMPT', self.iface.mainWindow())
-        self.visibility_action.triggered.connect(self.open_visibility)
-        self.iface.addPluginToMenu(PLUGIN_NAME, self.visibility_action)
 
     def open(self):
         if self.dialog is None:
-            self.dialog = DownloadDialog(self.iface, self.coverage_manager, self.open_visibility)
+            from .workspace_dialog import WorkspaceDialog
+            self.dialog = WorkspaceDialog(self.iface, self.coverage_manager)
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
 
     def open_visibility(self):
-        from .visibility_dialog import VisibilityDialog
-        if self.visibility_dialog is None:
-            self.visibility_dialog = VisibilityDialog(self.iface, self.coverage_manager)
-        self.visibility_dialog.show()
-        self.visibility_dialog.raise_()
-        self.visibility_dialog.activateWindow()
+        self.open()
 
     def unload(self):
         if self.visibility_dialog:

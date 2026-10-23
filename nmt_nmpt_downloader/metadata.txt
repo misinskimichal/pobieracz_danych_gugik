@@ -2,10 +2,10 @@
 name=NMT i NMTP ściągacz
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
-version=1.2.0
+version=2.0.0
 author=Projekt lokalny
-description=Pobieranie NMT i NMPT oraz widoczność turbin z dachami i drzewami NMPT. Zadania w tle, statystyki i raporty.
-about=Numeryczne WCS GUGiK, EPSG:2180, GeoTIFF Float32. Analiza linii widzenia z lokalnym lub pełnym NMPT, wyniki GeoPackage/CSV/JSON/Markdown. Oddzielne foldery i indeksy kafli NMT/NMPT.
+description=Atlas widoczności całych kół NMT/NMPT, ekspozycja dróg i zabudowy, mapy PDF/PNG/HTML oraz pobieranie danych GUGiK.
+about=Jeden formularz pobierania i analizy. Osobne promienie i kroki NMT/NMPT. Obserwatorzy opcjonalni. Mapy liczby widocznych turbin, trzech wysokości wirnika i braków danych, GeoTIFF/GeoPackage/CSV/JSON, atlas PDF/PNG/HTML.
 category=Raster
 icon=icon.svg
 experimental=True
