@@ -465,8 +465,11 @@ class TerrainPlugin:
         self.coverage_manager = None
         self.visibility_dialog = None
         self.visibility_action = None
+        self.atlas_links = None
 
     def initGui(self):
+        from .atlas_links import AtlasLinks
+        self.atlas_links = AtlasLinks(self.iface, self.open_atlas_report)
         self.coverage_manager = CoverageManager(self.iface)
         self.action = QAction(QIcon(str(Path(__file__).with_name('icon.svg'))),
                               PLUGIN_NAME, self.iface.mainWindow())
@@ -485,7 +488,14 @@ class TerrainPlugin:
     def open_visibility(self):
         self.open()
 
+    def open_atlas_report(self, filename):
+        self.open()
+        self.dialog.load_report(str(filename))
+
     def unload(self):
+        if self.atlas_links:
+            self.atlas_links.stop()
+            self.atlas_links = None
         if self.visibility_dialog:
             if self.visibility_dialog.task:
                 self.visibility_dialog.task.cancel()

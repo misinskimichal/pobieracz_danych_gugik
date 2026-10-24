@@ -1139,7 +1139,7 @@ class AtlasTests(unittest.TestCase):
         surface_valid[140:170, 140:170] = False
         turbine = dict(id='</script><script>bad()', x=150, y=150, hub=20, diameter=10)
         result = write_details(self.root, dict(resource='NMPT', radius=100), grid, turbine, ground, valid,
-                               ground, surface_valid, -3, dict(eye=1.7, curvature=False), self.event)
+                               ground, surface_valid, -3, dict(eye=1.7, curvature=False, scene_vertices=129), self.event)
         text = Path(result['scene']).read_text()
         payload = json.loads(re.search(r'const scene=(.*?);\n', text).group(1))
         self.assertLessEqual(len(payload['x']), 129)
@@ -1188,6 +1188,172 @@ class AtlasTests(unittest.TestCase):
         DownloaderTests.wait_until(self, lambda: bool(results))
         self.assertTrue(results[0]['canceled'])
         self.assertTrue(Path(report['products'][0]['paths']['count']).is_file())
+
+    def test_detail_density_and_crop_preserve_real_heights(self):
+        import re
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.atlas_details import write_details
+        grid = Grid(0, 600, 1, 600, 600)
+        ground = np.full((600, 600), 100.0)
+        valid = np.ones(ground.shape, bool)
+        turbine = dict(id='A', x=300, y=300, hub=20, diameter=10)
+        spec = dict(resource='NMPT', radius=250)
+        opts = dict(eye=1.7, curvature=False, scene_vertices=129)
+        light = write_details(self.root, spec, grid, turbine, ground, valid, ground, valid, 100, opts, self.event)
+        opts.update(scene_vertices=513, scene_radius=80)
+        detail = write_details(self.root, spec, grid, turbine, ground, valid, ground, valid, 100, opts, self.event)
+        self.assertGreater(light['preview_step_m'], detail['preview_step_m'])
+        self.assertEqual(detail['preview_step_m'], 1)
+        self.assertEqual(detail['scene_radius'], 80)
+        self.assertEqual(detail['vertices'], [160, 160])
+        payload = json.loads(re.search(r'const scene=(.*?);\n', Path(detail['scene']).read_text()).group(1))
+        self.assertEqual(payload['profile_radius'], 250)
+        self.assertTrue(all(v is None or v == 100 for row in payload['surface'] for v in row))
+        self.assertTrue(Path(detail['fallback_scene']).is_file())
+        self.assertNotIn('/*SCENE_RENDERER*/', Path(detail['scene']).read_text())
+
+    def test_bdot_forest_and_tree_symbols_do_not_change_visibility(self):
+        import re
+        values = np.full((201, 201), 100.0)
+        values[90:115, 105:125] = 115
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        baseline = self.engine().run()
+        forest = layer_for([(105, 86, 125, 111)])
+        trees = QgsVectorLayer('Point?crs=EPSG:2180', 'drzewa', 'memory')
+        for point in ['POINT (115 100)', 'POINT (60 100)']:
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromWkt(point))
+            trees.dataProvider().addFeatures([feature])
+        report = self.engine({role: (QgsVectorLayerFeatureSource(layer), layer.crs())
+                              for role, layer in [('lasy', forest), ('drzewa', trees)]}).run()
+        self.assertEqual(report['state'], baseline['state'], report.get('fatal_error'))
+        detail = next(d for d in report['details'] if d['model'] == 'NMPT')
+        payload = json.loads(re.search(r'const scene=(.*?);\n', Path(detail['scene']).read_text()).group(1))
+        self.assertTrue(any(v == 1 for row in payload['forest'] for v in row))
+        self.assertEqual(len(payload['trees']), 1)
+        self.assertAlmostEqual(payload['trees'][0]['height'], 15)
+        for before, after in zip(baseline['products'], report['products']):
+            np.testing.assert_array_equal(gdal.Open(before['paths']['count']).ReadAsArray(), gdal.Open(after['paths']['count']).ReadAsArray())
+        self.assertEqual(report['context_summary'], [])
+
+    def test_source_mask_cache_reused_and_invalidated_after_source_change(self):
+        first = self.engine().run()
+        self.assertEqual(first['state'], 'completed', first.get('fatal_error'))
+        cache = Path(self.config['report_folder']) / '.nmt_nmpt_cache' / 'validity'
+        timestamps = {p.name: p.stat().st_mtime_ns for p in cache.glob('*.tif')}
+        self.assertTrue(timestamps)
+        engine, messages = self.engine(), []
+        engine.notify = messages.append
+        second = engine.run()
+        self.assertEqual(second['state'], 'completed', second.get('fatal_error'))
+        self.assertTrue(any('Użyto zapisanej maski' in m['stage'] for m in messages))
+        self.assertEqual(timestamps, {p.name: p.stat().st_mtime_ns for p in cache.glob('*.tif')})
+        values = np.full((201, 201), 100.0)
+        values[:, 110:113] = -9999
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        third = self.engine().run()
+        self.assertEqual(third['state'], 'completed_with_gaps')
+        self.assertGreater(len(list(cache.glob('*.tif'))), len(timestamps))
+        self.assertGreater(third['products'][1]['summary']['unknown_cells'], 0)
+
+    def test_report_layer_actions_and_context_menu_survive_project_restore(self):
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from nmt_nmpt_downloader.atlas_links import AtlasLinks, PROPERTY
+        from nmt_nmpt_downloader.atlas_presentation import add_atlas
+        report, window, registered = self.engine().run(), QMainWindow(), []
+
+        class Iface:
+            def mainWindow(self): return window
+            def addCustomActionForLayerType(self, action, menu, kind, all_layers): pass
+            def addCustomActionForLayer(self, action, layer): registered.append(action)
+            def removeCustomActionForLayerType(self, action): pass
+        manager = AtlasLinks(Iface())
+        add_atlas(report)
+        layer = next(item for item in QgsProject.instance().mapLayers().values() if item.customProperty(PROPERTY, False))
+        self.assertEqual(len(layer.actions().actions()), 4)
+        self.assertTrue(Path(report['report_dir'], 'atlas.html').is_file())
+        self.assertTrue(any(a.text() == 'Otwórz raport HTML' for a in registered))
+        path = self.root / 'restore.qgz'
+        self.assertTrue(QgsProject.instance().write(str(path)))
+        manager.stop()
+        QgsProject.instance().clear()
+        self.assertTrue(QgsProject.instance().read(str(path)))
+        registered.clear()
+        manager = AtlasLinks(Iface())
+        try:
+            layer = next(item for item in QgsProject.instance().mapLayers().values() if item.customProperty(PROPERTY, False))
+            self.assertEqual(len(layer.actions().actions()), 4)
+            action = next(a for a in registered if a.text() == 'Otwórz raport HTML')
+            with patch('nmt_nmpt_downloader.atlas_links.QDesktopServices.openUrl') as opened:
+                action.trigger()
+                self.assertEqual(Path(opened.call_args.args[0].toLocalFile()), Path(report['report_dir']) / 'atlas.html')
+            # With an enabled plugin, opening another project must also reattach the shortcuts.
+            QgsProject.instance().clear()
+            self.assertTrue(QgsProject.instance().read(str(path)))
+            self.assertTrue(manager.actions)
+        finally:
+            manager.stop()
+
+    def test_texture_is_rendered_asynchronously_and_embedded_without_external_image_url(self):
+        from nmt_nmpt_downloader.scene_texture import SceneTextures
+        from nmt_nmpt_downloader.atlas_presentation import add_atlas
+        report = self.engine().run()
+        QgsProject.instance().addMapLayer(layer_for([(0, 0, 201, 201)]))
+        add_atlas(report)
+        task, results = SceneTextures(report), []
+        task.completed.connect(results.append)
+        task.start()
+        DownloaderTests.wait_until(self, lambda: bool(results), 15000)
+        self.assertNotIn('error', results[0], results)
+        for detail in report['details']:
+            text = Path(detail['scene']).read_text()
+            self.assertIn('data:image/png;base64,', text)
+            self.assertNotIn('/*SCENE_TEXTURE*/null', text)
+            self.assertTrue(Path(detail['texture']).is_file())
+
+    def test_replay_from_saved_report_preserves_original_ids_and_uses_new_heights_without_download(self):
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from qgis.gui import QgsMapCanvas
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        self.layer.dataProvider().deleteFeatures([f.id() for f in self.layer.getFeatures()])
+        feature = QgsFeature()
+        feature.setGeometry(QgsGeometry.fromWkt('POINT (80.5 100.5)'))
+        self.layer.dataProvider().addFeatures([feature])
+        original = self.engine().run()
+        original_file = Path(original['report_dir']) / 'report.json'
+        original_bytes = original_file.read_bytes()
+        window, canvas = QMainWindow(), QgsMapCanvas()
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+            def mapCanvas(self): return canvas
+        view = WorkspaceDialog(Iface())
+        try:
+            with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning') as warning:
+                view.load_report(str(original_file))
+                self.assertTrue(view.rerun_button.isEnabled())
+                self.assertEqual(view.hub_field.currentField(), 'piasta_m')
+                view.hub_field.setField('')
+                view.hub.setValue(70)
+                view.show_after.setChecked(False)
+                view.export_after.setChecked(False)
+                view.auto_download.setChecked(True)  # Recalculate must still force local model inputs.
+                with patch('nmt_nmpt_downloader.atlas.AtlasEngine.download') as download:
+                    view.rerun()
+                    DownloaderTests.wait_until(self, lambda: view.task is None and view.export_job is None, 15000)
+                    download.assert_not_called()
+                self.assertFalse(warning.called, warning.call_args)
+            self.assertEqual(view.last_report['state'], 'completed', view.last_report.get('fatal_error'))
+            self.assertEqual(view.last_report['turbines'][0]['id'], original['turbines'][0]['id'])
+            self.assertEqual(view.last_report['turbines'][0]['hub'], 70)
+            self.assertFalse(view.last_report['options']['auto_download'])
+            self.assertEqual(view.last_report['options']['recalculate_from'], original['report_dir'])
+            self.assertNotEqual(view.last_report['report_dir'], original['report_dir'])
+            self.assertEqual(original_file.read_bytes(), original_bytes)
+        finally:
+            view.deleteLater()
+            canvas.deleteLater()
 
     def test_unified_ui_observers_empty_and_one_menu_action(self):
         from qgis.PyQt.QtWidgets import QMainWindow

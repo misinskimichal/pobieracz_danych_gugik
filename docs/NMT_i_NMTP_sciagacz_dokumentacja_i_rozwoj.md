@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.1.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.2.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -9,6 +9,8 @@
 Dokument opisuje działającą implementację i osobno proponowane rozszerzenia. **Wersja 2.0.0 dodaje atlas pełnych kół NMT/NMPT w jednym formularzu, z opcjonalnymi obserwatorami, drogami i zabudową** — patrz suplement G i [instrukcja 2.0.0](Instrukcja_ATLAS_2.0.0.md). Punktowy moduł z wydania 1.2.0 opisany w F jest etapem historycznym. Suplement E zachowuje szerszy plan, w tym przyszłe pełne 3D. Pozostałe przykłady biznesowe i prototypy nie stają się automatycznie funkcjami wtyczki.
 
 **Wydanie 2.1.0:** promienie widoczności konkretnych turbin, barwna mapa wysokości, przekrój i obracana scena powierzchni 3D oraz asynchroniczne renderowanie map — [pełna instrukcja i opis implementacji 2.1.0](Instrukcja_ATLAS_2.1.0.md). Prezentacja 3D powierzchni nie oznacza pełnego ray tracingu brył.
+
+**Wydanie 2.2.0:** gęstsze WebGL, opcjonalna tekstura mapy i warstwy BDOT, raport w panelu warstw oraz odtwarzanie i ponowne przeliczanie na lokalnych modelach — [instrukcja 2.2.0 i omówienie PDF](Instrukcja_ATLAS_2.2.0.md).
 
 ## Spis treści
 
@@ -1704,3 +1706,16 @@ Repozytoria bibliotek wskazano przy każdym zastosowaniu. Nazwy i adresy repozyt
 - `widoczne_pct` to procent próbek z potwierdzoną widocznością ≥1 turbiny, nie wirnika ani powierzchni działki. `niepewne_pct` obejmuje niepewność/braki/oko pod powierzchnią. Kategorie mogą się nakładać przy kilku turbinach. Poligony nadal są próbkowane po obrysie, nie całej powierzchni.
 
 Zmiana działa na lokalnych folderach danych. Dla starych raportów trzeba ponowić obliczenia, ponieważ skumulowana liczba turbin nie przechowuje ich tożsamości. Można wyłączyć automatyczne pobieranie, aby użyć wyłącznie już posiadanych kafli. Zachowaj katalog `mapy_atlasu` do późniejszego eksportu zapisanego układu QGIS.
+
+
+## Suplement I — wdrożone w 2.2.0: szczegółowe 3D, BDOT i warianty obliczeń
+
+[Instrukcja 2.2.0](Instrukcja_ATLAS_2.2.0.md) zawiera szczegóły wdrożenia, tabelę rozdzielczości, obsługę ponownego uruchomienia, ocenę PDF Radka Pasioka i zweryfikowane źródła rozwoju QGIS 3D.
+
+Gęsta siatka jest renderowana przez własny WebGL bez CDN i dodatkowych pakietów u użytkownika. Limity 129/257/513/1025 na bok, mniejszy zasięg samej sceny i jawny rzeczywisty krok pozwalają dobrać ciężar. Wariant 513 jest domyślny; Canvas do 129 pozostaje lekką alternatywą. Perspektywa, rzut równoległy, FOV, światło i zapis PNG nawiązują do możliwości wskazanych w PDF. Opcjonalna tekstura z widocznych warstw projektu jest renderowana asynchronicznie i osadzana w HTML; przygotowanie podkładu WMS/XYZ może korzystać z sieci.
+
+Poligony lasów klasyfikują materiał; punkty drzew uzyskują wysokość z NMPT−NMT w swoim położeniu i uproszczoną koronę. Nie dodajemy umownej wysokości lasu ani nie modyfikujemy rastra widoczności na podstawie samego BDOT. Do pełnej rekonstrukcji koron i brył potrzebne są dodatkowe dane, np. sklasyfikowany LAS/LAZ, LoD2 i zgodność epok. Pełny ray tracing, prześwity i sezonowe ulistnienie pozostają dalszym rozwojem.
+
+Warstwa `raport.gpkg` daje menu raportu, scen i przekrojów w panelu QGIS. Akcje zostają z projektem. `report.json` oraz `atlas.gpkg` pozwalają odtworzyć punkty, pierwotne identyfikatory i indywidualne wysokości. Przeliczenie używa nowych parametrów i lokalnych źródeł, tworzy osobny katalog i zapisuje pochodzenie wariantu w `options.recalculate_from`. Zmiana geometrii/zestawu wymaga zwykłego uruchomienia. Cache masek poprawnych pikseli jest identyfikowany stanem źródła i plików towarzyszących; nie zastępuje obliczeń nowych cieni ani źródłowych rastrów.
+
+Zweryfikowano 68 testów Python/QGIS oraz testy geometrii i sterowania JavaScript, a shadery skompilowano i użyto do renderowania przez Mesa/EGL. Publiczne sceny są syntetyczne. Załącznik użytkownika i jego geometrie nie są publikowane.

@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
-const template = fs.readFileSync('nmt_nmpt_downloader/scene3d.html', 'utf8');
+const template = fs.readFileSync('nmt_nmpt_downloader/scene3d_canvas.html', 'utf8');
 const source = template.match(/<script>([\s\S]*?)<\/script>/)[1];
 let commands = [], frames = [];
 const ctx = new Proxy({}, {get: (_, name) => (...args) => {

@@ -150,6 +150,13 @@ def add_atlas(report, iface=None, show=True):
                              else str(Path(run) / (key.replace('/', '_') + '.qml')))
         return layer
 
+    if report.get('links_gpkg'):
+        from .atlas_links import configure_links
+        links = QgsVectorLayer(report['links_gpkg'] + '|layername=raport', 'Raport HTML i sceny 3D · prawy przycisk', 'ogr')
+        configure_links(links)
+        links.renderer().setSymbol(QgsFillSymbol.createSimple(dict(color='0,0,0,0', outline_color='#18a991', outline_style='dash')))
+        add(links, group, 'report_links', False)
+
     if report.get('gpkg'):
         turbines = QgsVectorLayer(report['gpkg'] + '|layername=turbiny', 'Turbiny — wysokość piasty i wirnik', 'ogr')
         symbol = QgsMarkerSymbol()

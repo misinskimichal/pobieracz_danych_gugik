@@ -65,6 +65,8 @@ def read_points(source, crs, context, kind, options, event):
                 raise ValueError('Nieprawidłowe współrzędne')
             item = dict(id=str(feature.id()), x=point.x(), y=point.y(), representative=polygon)
             if kind == 'turbines':
+                if options.get('turbine_id_field'):
+                    item['id'] = str(feature[options['turbine_id_field']])
                 for name, default, minimum in [('hub', 120, 0.01), ('diameter', 160, 0)]:
                     field = options.get(name + '_field', '')
                     value = float(feature[field] if field else options.get(name, default))

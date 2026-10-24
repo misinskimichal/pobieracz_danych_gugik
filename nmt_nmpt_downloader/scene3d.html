@@ -1,62 +1,27 @@
 <!doctype html><html lang="pl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Scena 3D — atlas widoczności</title>
-<style>*{box-sizing:border-box}body{margin:0;background:#102b38;color:#e9f3f5;font:15px system-ui,sans-serif}header{padding:20px 28px;background:#153747}h1{font-size:25px;margin:0 0 8px}p{margin:5px 0;color:#b6d1da;line-height:1.5}.controls{display:flex;gap:22px;flex-wrap:wrap;padding:16px 28px;align-items:center}label{display:flex;gap:10px;align-items:center}input[type=range]{width:140px;accent-color:#6dd6ad}a,button{color:#153747;background:#8de1ca;border:0;border-radius:6px;padding:8px 14px;text-decoration:none;cursor:pointer}canvas{display:block;width:100%;height:65vh;min-height:360px;touch-action:none;background:linear-gradient(#bedeea,#ecf1e7)}aside{padding:16px 28px;line-height:1.65;color:#bfd6dd}.key{display:inline-block;width:180px;height:12px;background:linear-gradient(90deg,#21865a,#e4d45e,#d34747);margin:0 12px;vertical-align:middle}output{min-width:38px}small{color:#b6d1da}</style>
-<header><h1 id="title">Scena 3D</h1><p id="info"></p><p>Przeciągnij scenę, aby zmienić stronę i kąt obserwacji. Kółko myszy zmienia powiększenie.</p></header>
-<div class="controls"><label>Strona <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
-<label>Nachylenie <input id="tilt" type="range" min="8" max="80" value="25"><output id="tval"></output></label>
+<style>*{box-sizing:border-box}body{margin:0;background:#102b38;color:#e9f3f5;font:15px system-ui,sans-serif}header{padding:20px 28px;background:#153747}h1{font-size:25px;margin:0 0 8px}p{margin:5px 0;color:#b6d1da;line-height:1.5}.controls{display:flex;gap:14px 22px;flex-wrap:wrap;padding:15px 28px;align-items:center}label{display:flex;gap:8px;align-items:center}input[type=range]{width:105px;accent-color:#6dd6ad}a,button,select{color:#153747;background:#8de1ca;border:0;border-radius:6px;padding:8px 12px;text-decoration:none;cursor:pointer}canvas{display:block;width:100%;height:65vh;min-height:360px;touch-action:none;background:#dce9e9}aside{padding:16px 28px;line-height:1.65;color:#bfd6dd}.key{display:inline-block;width:160px;height:12px;background:linear-gradient(90deg,#21865a,#e4d45e,#d34747);margin:0 12px;vertical-align:middle}output{min-width:30px}#status{padding:8px 28px;color:#94ddcd}@media print{.controls{display:none}body,header{background:white;color:#153747}p,aside{color:#153747}canvas{height:65vh}}</style>
+<header><h1 id="title">Scena 3D</h1><p id="info"></p><p>Przeciągnij, aby obrócić. Kółko myszy powiększa. Gęsta siatka jest renderowana przez WebGL.</p></header>
+<div class="controls">
+<label>Strona <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
+<label>Nachylenie <input id="tilt" type="range" min="8" max="80" value="28"><output id="tval"></output></label>
 <label>Pion × <input id="vertical" type="range" min="1" max="5" step=".25" value="1"><output id="vval"></output></label>
-<label><input id="cover" type="checkbox" checked>Pokrycie NMPT</label><button id="reset">Ustaw widok z przekroju</button><a id="profile">Przekrój i linie widzenia</a></div>
-<canvas id="view" aria-label="Obracana scena 3D terenu i turbiny"></canvas>
+<label>Oświetlenie <input id="sun" type="range" min="0" max="360" value="300"></label>
+<label>Rzut <select id="projection"><option value="perspective">Perspektywiczny</option><option value="ortho">Równoległy</option></select></label>
+<label>Kąt widzenia <input id="fov" type="range" min="15" max="90" value="45"><output id="fval"></output></label>
+<label>Kolory <select id="material"><option value="height">Wysokość</option><option value="cover">Pokrycie / BDOT</option><option id="texture-option" value="texture" disabled>Tekstura mapy</option></select></label>
+<label><input id="cover" type="checkbox" checked>Powierzchnia NMPT</label>
+<label><input id="trees" type="checkbox" checked>Symbole drzew</label>
+<label><input id="lines" type="checkbox" checked>Linie przekroju</label>
+<button id="reset">Przywróć kamerę</button><button id="save">Zapisz PNG</button><a id="profile">Przekrój</a><a id="fallback">Lekki podgląd bez WebGL</a>
+</div><div id="status" role="status">Przygotowanie siatki…</div>
+<canvas id="view" aria-label="Szczegółowa scena 3D terenu i turbiny"></canvas>
 <aside><span id="low"></span><span class="key"></span><span id="high"></span><br>
-Biała konstrukcja: turbina. Linie przerywane: trasy do końca łopaty, piasty i dolnego zasięgu wirnika od obserwatora z przekroju (linie są nakładką, nie znikają za siatką).<br>
-<b>To podgląd 3D powierzchni 2,5D.</b> Podgląd ma ograniczoną liczbę wierzchołków i może wygładzać małe przeszkody. Wynik analizy i profil wykorzystują oryginalny krok obliczeń. Kolor oznacza wysokość, nie widoczność. Korony i dachy są pełną powierzchnią, bez wnętrz i prześwitów. Pion ×1 zachowuje proporcje metrów; większe wartości są tylko powiększeniem wizualnym. Krzywiznę uwzględnia analiza i przekrój, scena pokazuje lokalną powierzchnię płaską.</aside>
+Kolory wysokości opisują metry. W trybie pokrycia zielony las pochodzi z wybranej warstwy BDOT; nie dodajemy mu umownej wysokości. Symbole drzew mają wysokość z różnicy NMPT−NMT w ich położeniu; kształt korony jest ilustracyjny. Pokrycie i drzewa służą prezentacji, nie zmieniają obliczonej widoczności.<br>
+To powierzchnia 2,5D oglądana w 3D. Podgląd może mieć rzadszą siatkę niż analiza — oba kroki pokazano w nagłówku. Braki są otworami. Pion ×1 zachowuje proporcje metrów. Oświetlenie nie jest analizą cieni słonecznych. Linie widzenia są nakładką; przy włączonej nakładce nie znikają za siatką. Kamera porusza się niezależnie od obserwatora przekroju. Krzywizna jest uwzględniana w analizie i profilu zgodnie z opcją; scena jest lokalna i płaska. Las w NMPT to pełna powierzchnia bez modelu prześwitów i sezonowości.</aside>
 <script>
 'use strict';
 const scene=/*SCENE_DATA*/;
-const $=id=>document.getElementById(id), canvas=$('view'),ctx=canvas.getContext('2d');
-$('title').textContent=`${scene.resource} · turbina ${scene.turbine} · scena 3D`;
-$('info').textContent=`${scene.demo?'DANE SYNTETYCZNE · ':''}Promień ${scene.radius} m · analiza ${scene.analysis_step_m} m · siatka podglądu ok. ${scene.step_m} m · ${scene.status.join(' / ')}`;
-$('profile').href=`profil_${scene.resource}.svg`;
-$('bearing').value=scene.azimuth;
-$('cover').checked=scene.resource==='NMPT';$('cover').disabled=scene.resource!=='NMPT';
-let zoom=1,pending=false,drag=null;
-const rad=d=>d*Math.PI/180;
-function schedule(){if(!pending){pending=true;requestAnimationFrame(draw)}}
-function color(t,light){const stops=[[33,134,90],[228,212,94],[211,71,71]],f=Math.max(0,Math.min(.99999,t))*2,i=Math.floor(f),u=f-i;return `rgb(${stops[i].map((v,k)=>Math.round((v*(1-u)+stops[i+1][k]*u)*light)).join(',')})`}
-function draw(){pending=false;
- const dpr=Math.min(window.devicePixelRatio||1,2),w=canvas.clientWidth,h=canvas.clientHeight;canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);ctx.scale(dpr,dpr);ctx.clearRect(0,0,w,h);
- const bearing=+$('bearing').value,tilt=+$('tilt').value,vertical=+$('vertical').value;
- $('bval').textContent=`${Math.round(bearing)}°`;$('tval').textContent=`${tilt}°`;$('vval').textContent=vertical;
- const heights=$('cover').checked?scene.surface:scene.ground,finite=heights.flat().filter(v=>v!==null);
- if(!finite.length){ctx.fillStyle='#153747';ctx.font='20px sans-serif';ctx.fillText('Brak danych do wyświetlenia powierzchni',25,60);return}
- let low=Infinity,high=-Infinity;for(const z of finite){low=Math.min(low,z);high=Math.max(high,z)}
- $('low').textContent=`${low.toFixed(1)} m`;$('high').textContent=`${high.toFixed(1)} m`;
- const ca=Math.cos(rad(bearing)),sa=Math.sin(rad(bearing)),ct=Math.cos(rad(tilt)),st=Math.sin(rad(tilt));
- const scale=Math.min(w/(scene.radius*2.4),h/(scene.radius*1.6+(high-low+scene.hub+scene.diameter)*vertical))*zoom;
- function project(x,y,z){const depth=x*sa+y*ca;return [w/2+(x*ca-y*sa)*scale,h*.59+(depth*st-(z-low)*vertical*ct)*scale,depth*ct+(z-low)*vertical*st]}
- const points=heights.map((row,i)=>row.map((z,j)=>z===null?null:project(scene.x[j],scene.y[i],z)));
- const faces=[];
- for(let i=0;i<heights.length-1;i++)for(let j=0;j<heights[0].length-1;j++)for(const indices of [[[i,j],[i+1,j],[i,j+1]],[[i+1,j],[i+1,j+1],[i,j+1]]]){
-  const p=indices.map(([r,c])=>points[r][c]);if(p.some(v=>v===null))continue;
-  const z=indices.map(([r,c])=>heights[r][c]),mean=(z[0]+z[1]+z[2])/3;
-  const light=Math.max(.64,Math.min(1,(.88+(z[1]-z[0])/(scene.step_m||1)*.08)));
-  faces.push({p,depth:(p[0][2]+p[1][2]+p[2][2])/3,color:color((mean-low)/(high-low||1),light)})
- }
- function structure(a,b,width){for(let part=0;part<40;part++){const p=[part/40,(part+1)/40].map(t=>project(...a.map((v,k)=>v+(b[k]-v)*t)));faces.push({p,depth:(p[0][2]+p[1][2])/2,width})}}
- if(scene.ground_z!==null){const z=scene.ground_z+scene.hub;structure([0,0,scene.ground_z],[0,0,z],4);for(let k=0;k<3;k++){const a=rad(k*120+20),r=scene.diameter/2;structure([0,0,z],[r*Math.sin(a),0,z+r*Math.cos(a)],3)}}
- faces.sort((a,b)=>a.depth-b.depth);
- for(const f of faces){ctx.beginPath();ctx.moveTo(f.p[0][0],f.p[0][1]);ctx.lineTo(f.p[1][0],f.p[1][1]);if(f.width){ctx.strokeStyle='#315464';ctx.lineWidth=f.width+2;ctx.stroke();ctx.strokeStyle='white';ctx.lineWidth=f.width;ctx.stroke()}else{ctx.lineTo(f.p[2][0],f.p[2][1]);ctx.closePath();ctx.fillStyle=f.color;ctx.fill()}}
- function line(a,b,color,width,dash=[]){ctx.beginPath();ctx.setLineDash(dash);ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke();ctx.setLineDash([])}
- if(scene.ground_z!==null){const hub=project(0,0,scene.ground_z+scene.hub);
-  ctx.fillStyle='#153747';ctx.font='bold 13px sans-serif';ctx.fillText(`Turbina ${scene.turbine}`,hub[0]+10,hub[1]-8);
-  if(scene.eye!==null){const eye=project(scene.observer[0],scene.observer[1],scene.eye);for(const [delta,color] of [[scene.diameter/2,'#8a65ca'],[0,'#e04264'],[-scene.diameter/2,'#c28c20']])line(eye,project(0,0,scene.ground_z+scene.hub+delta),color,2,[7,5]);ctx.fillStyle='#153747';ctx.beginPath();ctx.arc(eye[0],eye[1],5,0,Math.PI*2);ctx.fill();ctx.fillText('Obserwator przekroju',eye[0]+9,eye[1]+18)}
- }
- ctx.fillStyle='#153747';ctx.font='13px sans-serif';ctx.fillText('NMT i NMTP ściągacz · podgląd 3D · wysokości w metrach',18,h-18);
-}
-for(const id of ['bearing','tilt','vertical','cover'])$(id).addEventListener('input',schedule);
-$('reset').onclick=()=>{$('bearing').value=scene.azimuth;$('tilt').value=25;$('vertical').value=1;zoom=1;schedule()};
-canvas.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,b:+$('bearing').value,t:+$('tilt').value};canvas.setPointerCapture(e.pointerId)};
-canvas.onpointermove=e=>{if(drag){$('bearing').value=(drag.b+(e.clientX-drag.x)*.35+360)%360;$('tilt').value=Math.max(8,Math.min(80,drag.t+(e.clientY-drag.y)*.2));schedule()}};
-canvas.onpointerup=canvas.onpointercancel=()=>{drag=null};canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.4,Math.min(4,zoom*Math.exp(-e.deltaY*.001)));schedule()},{passive:false});
-window.addEventListener('resize',schedule);schedule();
+const textureData=/*SCENE_TEXTURE*/null;
+/*SCENE_RENDERER*/
 </script></html>

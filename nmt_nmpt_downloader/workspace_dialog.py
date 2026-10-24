@@ -1,16 +1,17 @@
 """One shared workflow: data, independent circular models and optional project context."""
 from pathlib import Path
+import json
 import time
 
 from qgis.PyQt.QtCore import QSettings, QTimer, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
+    QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
     QSpinBox, QTableWidget, QVBoxLayout, QWidget,
 )
 from qgis.core import (QgsApplication, QgsCoordinateTransformContext, QgsFieldProxyModel,
-                       QgsMapLayerProxyModel, QgsProject, QgsTask, QgsVectorLayerFeatureSource)
+                       QgsMapLayerProxyModel, QgsProject, QgsTask, QgsVectorLayer, QgsVectorLayerFeatureSource)
 from qgis.gui import QgsFieldComboBox, QgsMapLayerComboBox
 
 from .atlas import AtlasEngine, MAX_LOCAL_CELLS
@@ -194,7 +195,29 @@ class WorkspaceDialog(QDialog):
         detail_form.addRow(self.details)
         detail_form.addRow('Numer turbiny w analizowanym zestawie (od 1):', self.view_turbine)
         detail_form.addRow('Kierunek od turbiny do obserwatora: 0° N, 90° E:', self.view_azimuth)
-        detail_form.addRow(QLabel('Obserwator przekroju leży na brzegu wybranego koła. Scena 3D ma uproszczoną siatkę; analiza zachowuje zadany krok.'))
+        self.scene_quality = QComboBox()
+        for label, count in [('Lekka · do 129 × 129', 129), ('Średnia · do 257 × 257', 257),
+                             ('Dokładna · do 513 × 513', 513), ('Bardzo dokładna · do 1025 × 1025', 1025)]:
+            self.scene_quality.addItem(label, count)
+        self.scene_quality.setCurrentIndex(2)
+        self.scene_radius = metric(0, 0, 200000)
+        self.scene_radius.setSpecialValueText('Cały promień analizy')
+        detail_form.addRow('Gęstość siatki 3D (bez zmiany analizy):', self.scene_quality)
+        detail_form.addRow('Mniejszy promień samej sceny 3D (0 = cały):', self.scene_radius)
+        self.scene_layers = {}
+        for role, title, filters in [('lasy', 'Lasy / zadrzewienia (opcjonalnie BDOT):', QgsMapLayerProxyModel.PolygonLayer),
+                                     ('drzewa', 'Drzewa — punkty (opcjonalnie BDOT):', QgsMapLayerProxyModel.PointLayer)]:
+            combo = QgsMapLayerComboBox()
+            combo.setFilters(filters)
+            combo.setAllowEmptyLayer(True)
+            combo.setLayer(None)
+            self.scene_layers[role] = combo
+            detail_form.addRow(title, combo)
+        self.scene_texture = QCheckBox('Nałóż na 3D teksturę z widocznych podkładów projektu (np. ortofotomapy)')
+        detail_form.addRow(self.scene_texture)
+        note = QLabel('Mniejszy zasięg daje drobniejszy piksel 3D. Rzeczywisty krok jest podany w scenie. BDOT określa pokrycie; wysokości pochodzą z NMT/NMPT. Tekstura WMS może wymagać połączenia z siecią.')
+        note.setWordWrap(True)
+        detail_form.addRow(note)
         form.addRow(self.detail_box)
         self.report_folder = FolderChooser(self.settings.value('nmt_nmpt/report_folder', ''))
         form.addRow('Folder atlasów i raportów:', self.report_folder)
@@ -253,15 +276,18 @@ class WorkspaceDialog(QDialog):
         self.ray_button = QPushButton('Wysokości + promienie')
         self.profile_button = QPushButton('Przekrój 2D')
         self.scene_button = QPushButton('Scena 3D')
+        self.rerun_button = QPushButton('Przelicz ponownie · lokalne modele')
+        self.load_button = QPushButton('Wczytaj report.json')
         hide = QPushButton('Ukryj')
         for button in [self.start_button, self.cancel_button, self.map_button, self.report_button, hide]:
             buttons.addWidget(button)
         layout.addLayout(buttons)
         detail_buttons = QHBoxLayout()
-        for button in [self.ray_button, self.profile_button, self.scene_button]:
+        for button in [self.ray_button, self.profile_button, self.scene_button, self.rerun_button]:
             detail_buttons.addWidget(button)
             button.setEnabled(False)
         layout.addLayout(detail_buttons)
+        detail_buttons.addWidget(self.load_button)
         self.cancel_button.setEnabled(False)
         self.map_button.setEnabled(False)
         self.report_button.setEnabled(False)
@@ -272,6 +298,8 @@ class WorkspaceDialog(QDialog):
         self.ray_button.clicked.connect(self.show_rays)
         self.profile_button.clicked.connect(lambda: self.open_detail('profile'))
         self.scene_button.clicked.connect(lambda: self.open_detail('scene'))
+        self.rerun_button.clicked.connect(self.rerun)
+        self.load_button.clicked.connect(self.load_report)
         hide.clicked.connect(self.hide)
         self.mode.currentIndexChanged.connect(self.mode_changed)
         for panel in self.panels.values():
@@ -367,21 +395,26 @@ class WorkspaceDialog(QDialog):
                                resource_settings={r: source_settings[r] for r in selected}), {}
         models = [self.panels[r].model() for r in selected]
         contexts = {}
-        for role, combo in self.context_layers.items():
+        for role, combo in dict(self.context_layers, **self.scene_layers).items():
             other = combo.currentLayer()
             if other is not None:
                 if not other.crs().isValid():
                     raise ValueError('Brak CRS warstwy: ' + other.name())
                 contexts[role] = (QgsVectorLayerFeatureSource(other), other.crs())
         opts = dict(common, models=models, source_settings=source_settings, turbines_ids=ids,
+                    turbine_id_field=layer.customProperty('nmt_nmpt/turbine_id_field', ''),
+                    context_layer_ids={key: combo.currentLayer().id() for key, combo in dict(self.context_layers, **self.scene_layers).items()
+                                       if combo.currentLayer() is not None},
                     hub=self.hub.value(), diameter=self.diameter.value(), hub_field=self.hub_field.currentField(),
                     diameter_field=self.diameter_field.currentField(), eye=self.eye.value(),
                     auto_download=self.auto_download.isChecked(), curvature=self.curvature.isChecked(),
                     rays=self.rays.isChecked(), ray_spacing=self.ray_spacing.value(), details=self.details.isChecked(),
-                    view_turbine=self.view_turbine.value(), view_azimuth=self.view_azimuth.value())
+                    view_turbine=self.view_turbine.value(), view_azimuth=self.view_azimuth.value(),
+                    scene_vertices=self.scene_quality.currentData(), scene_radius=self.scene_radius.value(),
+                    scene_texture=self.scene_texture.isChecked())
         return layer, opts, contexts
 
-    def start(self):
+    def start(self, local_only=False, previous_report=None):
         if self.task or self.export_job:
             return
         try:
@@ -389,6 +422,15 @@ class WorkspaceDialog(QDialog):
             self.running_atlas = self.mode.currentIndex() == 0
             context = QgsCoordinateTransformContext(QgsProject.instance().transformContext())
             source = QgsVectorLayerFeatureSource(layer)
+            if local_only:
+                from .visibility import read_points
+                import threading
+                points, issues = read_points(source, layer.crs(), context, 'turbines', options, threading.Event())
+                positions = sorted((str(t['id']), round(t['x'], 3), round(t['y'], 3)) for t in points)
+                original = sorted((str(t['id']), round(t['x'], 3), round(t['y'], 3)) for t in previous_report['turbines'])
+                if positions != original:
+                    raise ValueError('Zmieniono zestaw lub położenie turbin. Dla nowego obszaru użyj przycisku Utwórz atlas widoczności.')
+                options.update(auto_download=False, recalculate_from=previous_report['report_dir'])
             self.task = AtlasTask(source, layer.crs(), context, options, contexts) if self.running_atlas else DownloadTask(source, layer.crs(), context, options)
         except Exception as exc:
             QMessageBox.warning(self, PLUGIN_NAME, str(exc))
@@ -401,15 +443,18 @@ class WorkspaceDialog(QDialog):
                 self.settings.setValue(f'nmt_nmpt/{resource}/{key}', value)
         self.settings.setValue('nmt_nmpt/report_folder', options['report_folder'])
         self.inputs.setEnabled(False)
+        self.load_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.map_button.setEnabled(False)
         self.report_button.setEnabled(False)
         self.last_report = None
-        for button in [self.ray_button, self.profile_button, self.scene_button]:
+        for button in [self.ray_button, self.profile_button, self.scene_button, self.rerun_button]:
             button.setEnabled(False)
         self.atlas_layers = {}
         self.log.clear()
+        if local_only:
+            self.log.appendPlainText('Ponowne obliczenia: wyłącznie lokalne NMT/NMPT. Poprzedni wynik zostaje w osobnym folderze.')
         self.progress.setRange(0, 0)
         self.clock_started = time.monotonic()
         self.clock.start()
@@ -453,26 +498,54 @@ class WorkspaceDialog(QDialog):
         self.map_button.setEnabled(bool(report.get('products') or report.get('tiles')))
         if self.coverage_manager:
             self.coverage_manager.refresh_all()
-        if self.running_atlas and report['state'].startswith('completed') and (self.show_after.isChecked() or self.export_after.isChecked()):
+        if self.running_atlas and report['state'].startswith('completed') and (self.show_after.isChecked() or self.export_after.isChecked() or self.scene_texture.isChecked()):
             self.stage.setText('Prezentacja atlasu — legendy, mapy PDF / PNG i raport HTML…')
             QgsApplication.processEvents()
             try:
-                from .atlas_presentation import add_atlas, AsyncAtlasExport
+                from .atlas_presentation import add_atlas
                 self.atlas_layers = add_atlas(report, self.iface if self.show_after.isChecked() else None,
                                               show=self.show_after.isChecked())
-                if self.export_after.isChecked():
+                if report.get('options', {}).get('scene_texture') and report.get('details'):
+                    from .scene_texture import SceneTextures
                     self.progress.setRange(0, 0)
                     self.cancel_button.setEnabled(True)
-                    self.export_job = AsyncAtlasExport(report, self.atlas_layers, self)
+                    self.export_job = SceneTextures(report, self)
                     self.export_job.status.connect(self.stage.setText)
                     self.export_job.status.connect(self.log.appendPlainText)
-                    self.export_job.completed.connect(self.presentation_finished)
+                    self.export_job.completed.connect(self.textures_finished)
                     self.export_job.start()
+                    return
+                if self.export_after.isChecked():
+                    self.launch_export()
                     return
             except Exception as exc:
                 self.log.appendPlainText('Wyniki obliczono; problem prezentacji: ' + str(exc))
                 report['presentation_error'] = str(exc)
         self.complete(report)
+
+    def launch_export(self):
+        from .atlas_presentation import AsyncAtlasExport
+        self.progress.setRange(0, 0)
+        self.cancel_button.setEnabled(True)
+        self.export_job = AsyncAtlasExport(self.last_report, self.atlas_layers, self)
+        self.export_job.status.connect(self.stage.setText)
+        self.export_job.status.connect(self.log.appendPlainText)
+        self.export_job.completed.connect(self.presentation_finished)
+        self.export_job.start()
+
+    def textures_finished(self, result):
+        self.export_job = None
+        if result.get('canceled'):
+            self.last_report['presentation_error'] = 'Anulowano przygotowanie prezentacji; wyniki analizy zostały zachowane.'
+            self.complete(self.last_report)
+        else:
+            if result.get('error'):
+                self.last_report['scene_texture_error'] = result['error']
+                self.log.appendPlainText('Tekstura 3D: ' + result['error'])
+            if self.export_after.isChecked():
+                self.launch_export()
+            else:
+                self.complete(self.last_report)
 
     def presentation_finished(self, result):
         self.export_job = None
@@ -488,6 +561,12 @@ class WorkspaceDialog(QDialog):
         self.complete(self.last_report)
 
     def complete(self, report):
+        if self.report_dir:
+            from .core import atomic_json
+            try:
+                atomic_json(Path(self.report_dir) / 'report.json', report)
+            except (OSError, ValueError, TypeError) as exc:
+                self.log.appendPlainText('Nie można zapisać końcowej diagnostyki: ' + str(exc))
         self.clock.stop()
         self.cancel_button.setEnabled(False)
         self.progress.setRange(0, 100)
@@ -495,6 +574,7 @@ class WorkspaceDialog(QDialog):
         self.ray_button.setEnabled(bool(report.get('rays_gpkg')))
         self.profile_button.setEnabled(bool(report.get('details')))
         self.scene_button.setEnabled(bool(report.get('details')))
+        self.rerun_button.setEnabled(bool(report.get('turbines') and report.get('products')))
         text = {'completed': 'Gotowe — atlas wykonany' if self.running_atlas else 'Pobieranie wykonane',
                 'completed_with_gaps': 'Zakończono — sprawdź oznaczone braki danych',
                 'canceled': 'Anulowano; ukończone wyniki zachowano', 'failed': 'Zadanie nie powiodło się'}[report['state']]
@@ -505,6 +585,7 @@ class WorkspaceDialog(QDialog):
         self.stage.setText(text)
         self.log.appendPlainText(text)
         self.inputs.setEnabled(True)
+        self.load_button.setEnabled(True)
         self.start_button.setEnabled(True)
         if report['state'] == 'completed' and not report.get('presentation_error'):
             QMessageBox.information(self, PLUGIN_NAME, text)
@@ -540,6 +621,89 @@ class WorkspaceDialog(QDialog):
             items = self.last_report['details']
             preferred = next((item for item in items if item['model'] == 'NMPT'), items[0])
             QDesktopServices.openUrl(QUrl.fromLocalFile(preferred[kind]))
+
+    def rerun(self):
+        if not self.task and not self.export_job and self.last_report and self.last_report.get('turbines'):
+            self.mode.setCurrentIndex(0)
+            self.start(local_only=True, previous_report=self.last_report)
+
+    def load_report(self, filename=None):
+        if self.task or self.export_job:
+            return
+        if not isinstance(filename, (str, Path)):
+            filename, _ = QFileDialog.getOpenFileName(self, 'Wczytaj ustawienia atlasu z report.json',
+                                                      self.report_dir or '', 'Raport JSON (*.json)')
+        if not filename:
+            return
+        try:
+            path = Path(filename)
+            report = json.loads(path.read_text(encoding='utf-8'))
+            if not report.get('products') or not report.get('turbines') or not report.get('options', {}).get('models'):
+                raise ValueError('To nie jest raport atlasu widoczności')
+            local = path.parent / 'atlas.gpkg'
+            source = local if local.is_file() else Path(report['gpkg'])
+            layer = QgsVectorLayer(str(source) + '|layername=turbiny', 'Turbiny z atlasu · ' + path.parent.name, 'ogr')
+            if not layer.isValid():
+                raise ValueError('Brak atlas.gpkg z geometrią i wysokościami turbin. Zachowaj cały folder atlasu.')
+            layer.setCustomProperty('nmt_nmpt/turbine_id_field', 'source_id')
+            QgsProject.instance().addMapLayer(layer)
+            self.mode.setCurrentIndex(0)
+            self.layer.setLayer(layer)
+            self.selected.setChecked(False)
+            self.hub_field.setField('piasta_m')
+            self.diameter_field.setField('srednica_m')
+            opts = report['options']
+            for resource, panel in self.panels.items():
+                model = next((s for s in opts['models'] if s['resource'] == resource), None)
+                panel.enabled.setChecked(model is not None)
+                panel.folder.edit.setText(opts['folders'].get(resource, ''))
+                settings = opts.get('source_settings', {}).get(resource, {})
+                panel.select_resolution(float(settings.get('resolution', 0)))
+                panel.strict.setChecked(bool(settings.get('strict_resolution', False)))
+                panel.height.setCurrentText((model or settings).get('height', 'PL-EVRF2007-NH'))
+                if model:
+                    panel.analysis_radius.setValue(model['radius'])
+                    panel.step.setCurrentText(str(model['resolution']))
+            for key, widget in [('eye', self.eye), ('hub', self.hub), ('diameter', self.diameter),
+                                ('view_turbine', self.view_turbine), ('view_azimuth', self.view_azimuth),
+                                ('scene_radius', self.scene_radius), ('ray_spacing', self.ray_spacing)]:
+                if key in opts:
+                    widget.setValue(opts[key])
+            self.scene_quality.setCurrentIndex(max(0, self.scene_quality.findData(opts.get('scene_vertices', 513))))
+            for key, checkbox in [('curvature', self.curvature), ('rays', self.rays), ('details', self.details),
+                                  ('scene_texture', self.scene_texture)]:
+                checkbox.setChecked(bool(opts.get(key, key != 'scene_texture')))
+            for key, combo in dict(self.context_layers, **self.scene_layers).items():
+                combo.setLayer(QgsProject.instance().mapLayer(opts.get('context_layer_ids', {}).get(key, '')))
+            self.auto_download.setChecked(False)
+            self.report_folder.edit.setText(str(path.parent.parent))
+            report['report_dir'] = str(path.parent)
+            report['gpkg'] = str(source)
+            for key, name in [('links_gpkg', 'raport.gpkg'), ('rays_gpkg', 'promienie.gpkg')]:
+                if (path.parent / name).is_file():
+                    report[key] = str(path.parent / name)
+            for product in report['products']:
+                for key, old_path in product['paths'].items():
+                    local = path.parent / product['resource'] / Path(old_path).name
+                    if local.is_file():
+                        product['paths'][key] = str(local)
+            for detail in report.get('details', []):
+                for key in ['profile', 'scene', 'fallback_scene', 'texture']:
+                    if detail.get(key) and (path.parent / Path(detail[key]).name).is_file():
+                        detail[key] = str(path.parent / Path(detail[key]).name)
+            if (path.parent / 'atlas.html').is_file():
+                report.setdefault('presentation', {})['html'] = str(path.parent / 'atlas.html')
+            self.last_report, self.report_dir, self.running_atlas = report, str(path.parent), True
+            self.atlas_layers = {}
+            self.rerun_button.setEnabled(True)
+            self.report_button.setEnabled(True)
+            self.map_button.setEnabled(True)
+            self.ray_button.setEnabled(bool(report.get('rays_gpkg')))
+            self.profile_button.setEnabled(bool(report.get('details')))
+            self.scene_button.setEnabled(bool(report.get('details')))
+            self.stage.setText('Wczytano poprzedni zestaw. Zmień parametry i kliknij Przelicz ponownie. Pola piasta_m / srednica_m zachowują wysokości; puste pola oznaczają stałe wartości.')
+        except Exception as exc:
+            QMessageBox.warning(self, PLUGIN_NAME, 'Nie można odtworzyć atlasu: ' + str(exc))
 
     def show_result(self):
         try:

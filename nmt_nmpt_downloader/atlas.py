@@ -2,6 +2,7 @@
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -99,7 +100,7 @@ def warp_grid(path, source, grid, algorithm, callback):
 class ModelSources:
     """Virtual data mosaics and binary quality mosaics; no full-area array in memory."""
 
-    def __init__(self, store, folder, geometries, event, log, notify=lambda _: None):
+    def __init__(self, store, folder, geometries, event, log, notify=lambda _: None, cache_folder=None):
         self.store, self.folder, self.event = store, folder, event
         folder.mkdir(parents=True, exist_ok=True)
         numbers = set()
@@ -122,8 +123,44 @@ class ModelSources:
             if normalized is None:
                 raise ValueError('Błąd przygotowania źródła: ' + path)
             normalized = None
-            valid_path = folder / f'valid_{number}.tif'
+            cache_key, valid_path = None, folder / f'valid_{number}.tif'
+            if cache_folder is not None:
+                # Sidecar masks and PAM metadata can change independently of the raster.
+                sidecars = []
+                for suffix in ['.msk', '.aux.xml']:
+                    side = Path(path + suffix)
+                    if side.is_file():
+                        stat = side.stat()
+                        sidecars.append((suffix, stat.st_size, stat.st_mtime_ns))
+                identity = dict(version='validity-v1', record=record, sidecars=sidecars,
+                                nodata=source.GetRasterBand(1).GetNoDataValue())
+                cache_key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+                try:
+                    cache_folder.mkdir(parents=True, exist_ok=True)
+                    valid_path = cache_folder / (cache_key + '.tif')
+                except OSError:
+                    cache_key = None
+            if cache_key and valid_path.is_file():
+                cached = None
+                try:
+                    cached = gdal.Open(str(valid_path))
+                    good_cache = cached is not None and cached.GetMetadataItem('VALIDITY_KEY') == cache_key and (
+                        cached.RasterXSize, cached.RasterYSize) == (grid.width, grid.height) and cached.GetGeoTransform() == grid.gt
+                except RuntimeError:
+                    good_cache = False
+                cached = None
+                if good_cache:
+                    source = None
+                    data_paths.append(str(data_path))
+                    valid_paths.append(str(valid_path))
+                    notify(f'Użyto zapisanej maski: plik {number + 1}/{len(self.records)}')
+                    continue
+            final_valid_path = valid_path
+            if cache_key:
+                valid_path = folder / f'valid_{number}.tif'
             valid = create_raster(valid_path, grid, gdal.GDT_Byte, None)
+            if cache_key:
+                valid.SetMetadataItem('VALIDITY_KEY', cache_key)
             band = source.GetRasterBand(1)
             for y in range(0, grid.height, 512):
                 for x in range(0, grid.width, 512):
@@ -137,6 +174,18 @@ class ModelSources:
                     good = (mask != 0) & np.isfinite(physical) & (physical >= -12000) & (physical <= 10000)
                     valid.GetRasterBand(1).WriteArray(good.astype(np.uint8), x, y)
             valid = None
+            if cache_key:
+                temporary = cache_folder / (cache_key + '.' + uuid.uuid4().hex + '.tmp.tif')
+                try:
+                    shutil.copy2(valid_path, temporary)
+                    temporary.replace(final_valid_path)
+                    valid_path = final_valid_path
+                except OSError as exc:
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        log('Nie można usunąć tymczasowej maski cache: ' + str(temporary))
+                    log('Maska zostaje w folderze roboczym; zapis cache niedostępny: ' + str(exc))
             source = None
             data_paths.append(str(data_path))
             valid_paths.append(str(valid_path))
@@ -329,6 +378,8 @@ class AtlasEngine:
     def __init__(self, source, crs, context, options, contexts=None, notify=lambda _: None, log=lambda _: None):
         self.source, self.crs, self.context = source, crs, context
         self.options, self.contexts = options, contexts or {}
+        self.scene_contexts = {key: value for key, value in self.contexts.items() if key in ('lasy', 'drzewa')}
+        self.contexts = {key: value for key, value in self.contexts.items() if key not in ('lasy', 'drzewa')}
         self.notify, self.log = notify, log
         self.cancel_event = threading.Event()
         self.started, self.report_dir = time.monotonic(), None
@@ -453,7 +504,8 @@ class AtlasEngine:
                     store = RasterStore(self.options['folders'][kind], kind, spec['height'], self.cancel_event)
                     stores.append(store)
                     model = ModelSources(store, work / (resource + '_' + kind), geometries, self.cancel_event, self.event,
-                                         lambda text: self.stats(resource + '/' + kind + ': ' + text))
+                                         lambda text: self.stats(resource + '/' + kind + ': ' + text),
+                                         Path(self.options['report_folder']) / '.nmt_nmpt_cache' / 'validity')
                     models.append(model)
                     source_models[kind] = model
                     self.report['raster_errors'].extend(store.errors)
@@ -505,7 +557,7 @@ class AtlasEngine:
                         try:
                             self.report['details'].append(write_details(self.report_dir, spec, grid, turbine, terrain,
                                                                         terrain_valid, surface, surface_valid, float(height[0]),
-                                                                        self.options, self.cancel_event))
+                                                                        self.options, self.cancel_event, self.scene_contexts, self.context))
                         except Canceled:
                             raise
                         except Exception as exc:
@@ -574,6 +626,8 @@ class AtlasEngine:
             self.report['gpkg'], context_stats = write_context(self.report_dir, self.report['products'], turbines,
                                                                self.contexts, self.context, self.cancel_event)
             self.report['context_summary'] = context_stats
+            from .atlas_links import write_shortcuts
+            self.report['links_gpkg'] = write_shortcuts(self.report_dir, self.report)
             self.report['state'] = 'completed_with_gaps' if self.report['input_issues'] or any(
                 p['state'] != 'completed' for p in self.report['products']) or any(
                 item.get('truncated') for item in context_stats + self.report.get('ray_summary', [])) or self.report['visualization_issues'] else 'completed'
@@ -642,6 +696,9 @@ class AtlasEngine:
                   '## Dane i problemy', '']
         for item in self.report.get('details', []):
             lines.append(f'- {item["model"]}: [przekrój]({Path(item["profile"]).name}), [scena 3D]({Path(item["scene"]).name}); turbina {item["turbine"]}, azymut {item["azimuth"]:g}°.')
+            lines.append(f'  Promień sceny: {item.get("scene_radius", 0):g} m; siatka {item.get("vertices", [])}; krok {item["preview_step_m"]:g} m.')
+            for context in item.get('context_summary', []):
+                lines.append(f'  BDOT / {context["role"]}: {context["features"]} użytych, {context["skipped"]} pominiętych; limit: {context["truncated"]}. Tylko prezentacja, wysokości z NMT/NMPT.')
         for item in self.report.get('ray_summary', []):
             lines.append(f'- Promienie {item["model"]}: {item["features"]} odcinków; krok {item["spacing_degrees"]:g}°; limit osiągnięty: {item["truncated"]}.')
         for item in self.report.get('visualization_issues', []):

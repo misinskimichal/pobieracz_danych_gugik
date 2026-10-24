@@ -171,7 +171,8 @@ def profile_svg(data, resource, turbine, path):
     Path(path).write_text('\n'.join(output), encoding='utf-8')
 
 
-def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, surface_valid, ground_z, options, event):
+def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, surface_valid, ground_z, options, event,
+                  scene_contexts=None, transform_context=None):
     """A small visual preview for one chosen turbine; never reduces the analysis resolution."""
     check_cancel(event)
     folder = Path(folder)
@@ -179,19 +180,33 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     data['demo'] = bool(options.get('demo'))
     profile_path = folder / ('profil_' + spec['resource'] + '.svg')
     profile_svg(data, spec['resource'], turbine, profile_path)
-    # <= 129x129 vertices. NaN gaps remain open; downsampling only affects this preview.
-    stride = max(1, int(math.ceil(max(grid.width, grid.height) / 128)))
-    rows, cols = np.arange(0, grid.height, stride), np.arange(0, grid.width, stride)
+    # Crop before decimating. Neither interpolation nor a larger mesh invents source detail.
+    radius = min(spec['radius'], float(options.get('scene_radius', 0)) or spec['radius'])
+    vertices = int(options.get('scene_vertices', 513))
+    if vertices not in (129, 257, 513, 1025) or radius <= 0:
+        raise ValueError('Nieprawidłowa gęstość lub promień sceny 3D')
+    x0 = max(0, int(math.floor((turbine['x'] - radius - grid.xmin) / grid.step)))
+    x1 = min(grid.width, int(math.ceil((turbine['x'] + radius - grid.xmin) / grid.step)))
+    y0 = max(0, int(math.floor((grid.ymax - turbine['y'] - radius) / grid.step)))
+    y1 = min(grid.height, int(math.ceil((grid.ymax - turbine['y'] + radius) / grid.step)))
+    stride = max(1, int(math.ceil(max(x1-x0, y1-y0) / (vertices - 1))))
+    rows, cols = np.arange(y0, y1, stride), np.arange(x0, x1, stride)
     gy, gx = np.meshgrid(rows, cols, indexing='ij')
     x = grid.xmin + (cols + .5) * grid.step - turbine['x']
     y = grid.ymax - (rows + .5) * grid.step - turbine['y']
-    inside = y[:, None] ** 2 + x[None, :] ** 2 <= spec['radius'] ** 2
+    inside = y[:, None] ** 2 + x[None, :] ** 2 <= radius ** 2
     valid = ground_valid[gy, gx] & surface_valid[gy, gx] & inside
 
     def clean(array, good):
         return [[round(float(v), 2) if ok and np.isfinite(v) else None for v, ok in zip(line, mask)] for line, mask in zip(array, good)]
 
-    payload = dict(resource=spec['resource'], turbine=str(turbine['id']), radius=spec['radius'], demo=bool(options.get('demo')),
+    from .scene_context import scene_context
+    forest, trees, context_summary = scene_context(scene_contexts or {}, transform_context, grid, turbine, radius, rows, cols,
+                                                   ground, ground_valid, surface, surface_valid, event)
+    payload = dict(resource=spec['resource'], turbine=str(turbine['id']), radius=radius, demo=bool(options.get('demo')),
+                   profile_radius=spec['radius'], forest=forest, trees=trees, context_summary=context_summary,
+                   texture_bounds=[grid.xmin+x0*grid.step-turbine['x'], grid.ymax-y1*grid.step-turbine['y'],
+                                   grid.xmin+x1*grid.step-turbine['x'], grid.ymax-y0*grid.step-turbine['y']],
                    step_m=grid.step * stride, analysis_step_m=grid.step, azimuth=data['azimuth'],
                    x=x.tolist(), y=y.tolist(), ground=clean(ground[gy, gx], ground_valid[gy, gx] & inside),
                    surface=clean(np.maximum(ground[gy, gx], surface[gy, gx]), valid),
@@ -200,8 +215,22 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
                    observer=[data['observer_x'] - turbine['x'], data['observer_y'] - turbine['y']], status=data['status'])
     scene = folder / ('scena_3d_' + spec['resource'] + '.html')
     template = Path(__file__).with_name('scene3d.html').read_text(encoding='utf-8')
+    template = template.replace('/*SCENE_RENDERER*/', Path(__file__).with_name('scene_webgl.js').read_text(encoding='utf-8'))
     # Avoid closing an inline script if a user-supplied source ID contains HTML.
     serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')
     scene.write_text(template.replace('/*SCENE_DATA*/', serialized), encoding='utf-8')
+    fallback = folder / ('scena_3d_lekka_' + spec['resource'] + '.html')
+    light_stride = max(1, int(math.ceil(max(len(rows), len(cols)) / 128)))
+    light = dict(payload)
+    for key in ['ground', 'surface', 'forest']:
+        light[key] = [row[::light_stride] for row in payload[key][::light_stride]]
+    for key in ['x', 'y']:
+        light[key] = payload[key][::light_stride]
+    light['step_m'] *= light_stride
+    legacy = Path(__file__).with_name('scene3d_canvas.html').read_text(encoding='utf-8')
+    fallback.write_text(legacy.replace('/*SCENE_DATA*/', json.dumps(light, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')), encoding='utf-8')
+    bounds = [grid.xmin+x0*grid.step, grid.ymax-y1*grid.step, grid.xmin+x1*grid.step, grid.ymax-y0*grid.step]
     return dict(model=spec['resource'], turbine=str(turbine['id']), profile=str(profile_path), scene=str(scene),
-                azimuth=data['azimuth'], preview_step_m=grid.step * stride, profile_status=data['status'])
+                fallback_scene=str(fallback), scene_bounds=bounds, scene_radius=radius, vertices=[len(cols), len(rows)],
+                context_summary=context_summary, azimuth=data['azimuth'], preview_step_m=grid.step * stride,
+                profile_status=data['status'])

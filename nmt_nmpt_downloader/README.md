@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.1.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.2.0
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.1.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.2.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -55,9 +55,23 @@ Licencja GPL-3.0. Pełna instrukcja i walidacja: `docs/Instrukcja_ATLAS_2.1.0.md
 - **Wysokości + promienie** przełącza mapę na wysokość: zielony nisko, czerwony wysoko, z odcinkami widoczności. Promienie piasty: zielony widoczna, czerwony zasłonięta, fioletowy niepewna, szary oko pod powierzchnią. Alternatywne style warstwy pokazują koniec łopaty i dolny zasięg. Atrybuty `turbina`, `azymut`, `od_m`, `do_m` pozwalają wybrać trasę i zakres.
 - Odstęp promieni domyślnie 10°; raster nadal analizuje wszystkie komórki. Limit 200 000 odcinków/model jest raportowany, nie ogranicza obliczeń mapy.
 - **Przekrój 2D** pokazuje teren, powierzchnię i trzy przerywane linie widzenia. Wybierz numer turbiny w zestawie i kierunek od niej do obserwatora na brzegu koła, 0° północ siatki, 90° wschód. Warstwa obserwatorów nie jest potrzebna.
-- **Scena 3D** otwiera lokalny HTML z terenem, NMPT, turbiną i liniami. Obrót myszą, nachylenie, powiększenie i pion ×1–5. Siatka podglądu ma do 129×129 wierzchołków; analiza i przekrój zachowują oryginalny krok. Jest to prezentacja powierzchni 2,5D w 3D, bez pełnego ray tracingu brył. Przy pion ×1 proporcje metrów są zachowane.
+- **Scena 3D** otwiera lokalny HTML z terenem, NMPT, turbiną i liniami. Obrót myszą, nachylenie, powiększenie i pion ×1–5. W 2.2.0 siatka jest wybierana do 1025×1025 wierzchołków, a lekki podgląd ma do 129×129; analiza i przekrój zachowują oryginalny krok. Jest to prezentacja powierzchni 2,5D w 3D, bez pełnego ray tracingu brył. Przy pion ×1 proporcje metrów są zachowane.
 - `widoczne_pct` oznacza procent próbek z potwierdzoną widocznością ≥1 turbiny. 80% = np. 8 z 10 badanych miejsc. To nie procent wirnika ani działki. `niepewne_pct` to udział próbek z niepewnością / okiem pod powierzchnią; może nakładać się z widocznością innych turbin.
 - Renderowanie map do atlasu działa asynchronicznie przez mechanizm QGIS. Okno pokazuje etap i bieżący czas także po pobraniu. Statystyki i piramidy modeli powstają w zadaniu roboczym. Końcowe składanie gotowych obrazów w PDF/PNG odbywa się w interfejsie i może spowodować krótką pauzę. **Anuluj** podczas renderowania zachowuje obliczone pliki.
 - Aby uzyskać nowe warstwy dla wcześniejszego wyniku, uruchom analizę na tych samych folderach. Możesz wyłączyć automatyczne pobieranie. Stary raport nie zawiera wyników oddzielnych turbin potrzebnych do promieni.
 
 Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_NMPT.svg`, `scena_3d_NMT.html`, `scena_3d_NMPT.html`, `mapy_atlasu/`. Zachowaj folder obrazów, jeśli chcesz ponownie eksportować układ zapisany w projekcie QGIS. Podglądy i raporty są lokalne i nie korzystają z CDN ani zewnętrznej usługi 3D.
+
+
+## Wydanie 2.2.0
+
+- Szczegółowe **WebGL**: siatki do 129/257/513/1025 punktów na bok, domyślnie 513. Mniejszy promień samej sceny daje drobniejszy krok bez zwiększania ciężaru całego koła analizy. Nagłówek zawsze podaje rzeczywisty krok. Przy analizie 1 m, promieniu sceny 500 m i limicie 1025 można zachować 1 m. Siatka nie jest dokładniejsza niż dane obliczeniowe.
+- Kamera perspektywiczna lub równoległa, kąt widzenia, kierunek oświetlenia, PNG. Lekki HTML bez WebGL pozostaje dostępny jako osobny plik. To nadal model powierzchni 2,5D, bez pełnego ray tracingu brył.
+- Opcjonalna **tekstura z widocznych warstw projektu**, np. ortofotomapy: renderowana w tle i osadzona w HTML. WMS/XYZ mogą połączyć się z siecią przy przygotowaniu tekstury; gotowa scena działa offline.
+- Opcjonalne poligony lasów i punkty drzew z BDOT/własnych danych. Las określa materiał, wysokości pozostają z NMT/NMPT. Symbole drzew korzystają z różnicy NMPT−NMT; kształty koron są ilustracyjne. Te dane nie zmieniają wyniku widoczności w tym wydaniu.
+- W panelu warstw **Raport HTML i sceny 3D · prawy przycisk** otwiera raport, sceny i profile. Odnośniki i menu są odtwarzane z projektem.
+- **Przelicz ponownie · lokalne modele** wykonuje nowy wariant aktualnych parametrów dla tych samych turbin, z pobieraniem modeli wymuszonym na wyłączone. Poprzedni katalog zostaje. Większy promień może ujawnić braki lokalnych danych.
+- **Wczytaj report.json** odtwarza zadanie także po zamknięciu QGIS, z punktami i wysokościami z `atlas.gpkg`. Pola `piasta_m` i `srednica_m` mają pierwszeństwo przed stałymi z lewej; wyczyść wybór pola, jeśli chcesz nadpisać je jedną liczbą.
+- Cache poprawności źródeł w `<folder atlasów>/.nmt_nmpt_cache/validity` ogranicza ponowne skanowanie pikseli. Zmiana źródła lub jego maski/metadanych unieważnia klucz. Samą widoczność przeliczamy ponownie.
+
+[Dokładna instrukcja i omówienie inspiracji z PDF](../docs/Instrukcja_ATLAS_2.2.0.md). Nowe pliki wyniku: `raport.gpkg`, `scena_3d_lekka_*.html` i opcjonalnie `tekstura_*.png`. Szczegółowa scena zawiera obraz w sobie. Modeli, cache i raportów użytkownika nie ma w ZIP-ie instalacyjnym.
