@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.5.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.6.0
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.5.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.6.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -76,6 +76,16 @@ Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_N
 
 [Dokładna instrukcja i omówienie inspiracji z PDF](../docs/Instrukcja_ATLAS_2.2.0.md). Nowe pliki wyniku: `raport.gpkg`, `scena_3d_lekka_*.html` i opcjonalnie `tekstura_*.png`. Szczegółowa scena zawiera obraz w sobie. Modeli, cache i raportów użytkownika nie ma w ZIP-ie instalacyjnym.
 
+
+## Wydanie 2.6.0 — punkty z mapy i szczegółowy widok z gruntu
+
+Wczytaj istniejący atlas i kliknij **Klikaj punkty wizualizacji na mapie**. Każde kliknięcie dodaje wiersz do tabeli oraz punkt w projekcie; małe okno pokazuje liczbę zebranych miejsc. Prawy przycisk / Escape / Zakończ wraca do formularza. Do 12 punktów, z nazwą i wysokością oka. **Przygotuj widoki punktów** odświeża prezentację bez ponownego liczenia widoczności. Punkty muszą mieścić się w obszarze zapisanych modeli; problem jednego punktu jest raportowany i nie zatrzymuje pozostałych.
+
+W HTML wybierasz **Miejsce** z listy. W trybie wybranych punktów tło ma do 513×513 wierzchołków i zdjęcie z celem co najmniej 0,5 m/px. Wokół każdego punktu przygotowywany jest fragment z istniejącego modelu obliczeniowego, do 513×513 i z celem zdjęcia 0,10 m/px, do 16 dodatkowych obrazów. Domyślny promień szczegółowego otoczenia: 120 m (30–250 m). GPU utrzymuje tylko aktywny lokalny detal. Rzeczywisty krok zależy od dostępnych danych i limitu siatki; nie odtwarzamy utraconych szczegółów przez samo zagęszczanie.
+
+Bliski las ma gęstsze, nieregularne próbki i teksturowane sylwetki z listowiem. Dalszy zachowuje ciągłą powierzchnię NMPT. Elewacje i okna, listowie, poszycie oraz miękkie cienie są poglądowe. Dachy korzystają z dokładnych kafli zdjęcia; spadki dopasowujemy do NMPT, gdy dane wystarczają, z płaskim modelem awaryjnym. Zdjęcie z góry nie daje fotograficznych elewacji.
+
+Punkty: `punkty_wizualizacji.geojson`. Dokładne lokalne zdjęcia: `ortofoto_NMPT_punkt_NN.vrt` i wspólny folder PNG. Wybierz wiersz w tabeli i **Dodaj pobraną ortofotomapę do QGIS**, aby dodać zdjęcie tego punktu. Cały HTML działa offline po eksporcie. Szczegóły i przykłady: [instrukcja 2.6.0](../docs/Instrukcja_ATLAS_2.6.0.md).
 
 ## Wydanie 2.5.0 — lokalna ortofotomapa WMS w szczegółowych kaflach
 

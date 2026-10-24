@@ -1,7 +1,7 @@
 // Pure geometry/projection checks; QGIS users do not need Node.js.
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const {heightColor,multiply,lookAt,projection,terrainTile,vertexShader,fragmentShader,surfaceAt,eyePose,displaySurface}=require('../nmt_nmpt_downloader/scene_webgl.js');
+const {heightColor,multiply,lookAt,projection,terrainTile,vertexShader,fragmentShader,surfaceAt,eyePose,displaySurface,shadowAllowed}=require('../nmt_nmpt_downloader/scene_webgl.js');
 assert.deepEqual(vertexShader.match(/varying\s+mediump\s+\w+\s+\w+;/g),fragmentShader.match(/varying\s+mediump\s+\w+\s+\w+;/g),'Varying precision must match for strict GLSL ES/WebGL linkers');
 const s={x:[-1,0,1],y:[1,0,-1],radius:1,forest:[[0,0,0],[0,1,0],[0,0,0]]};
 const heights=[[0,0,0],[0,null,0],[0,0,0]];
@@ -41,5 +41,8 @@ const forestScene={ground:[[100,100],[100,null]],surface:[[120,null],[115,125]],
 const original=JSON.stringify(forestScene);
 assert.deepEqual(displaySurface(forestScene,true,true),[[100,null],[115,125]],'Forest presentation must preserve original holes and keep other surface objects');
 assert.equal(JSON.stringify(forestScene),original,'Presentation must not alter measured heights used by the eye and analysis');
+const shadowScene={x:[0,1,2,3,4],y:[4,3,2,1,0],ground:Array.from({length:5},()=>Array(5).fill(100))};
+assert(shadowAllowed(shadowScene,2,2,1.5));shadowScene.ground[2][2]=null;
+assert(!shadowAllowed(shadowScene,2,2,1.5),'A decorative shadow must never cover a NoData hole even when its corners are valid');
 if(process.argv[2])fs.writeFileSync(process.argv[2],JSON.stringify({vertexShader,fragmentShader}));
 console.log('PASS: mesh gaps, safe UInt16 patches, forest colors, finite camera matrices, orthographic and perspective FOV');

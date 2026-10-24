@@ -10,7 +10,7 @@ from qgis.PyQt.QtCore import QRectF
 from qgis.PyQt.QtGui import QImage, QPainter
 
 
-def image_plan(x, y, origin, bounds, resolution=.25):
+def image_plan(x, y, origin, bounds, resolution=.25, max_axis=8):
     """At most 8x8 images, 64 MP; every internal image edge is a mesh edge."""
     resolution = float(resolution)
     if not math.isfinite(resolution) or not .05 <= resolution <= 10:
@@ -18,7 +18,7 @@ def image_plan(x, y, origin, bounds, resolution=.25):
     if len(x) < 2 or len(y) < 2:
         return []
     step = max(abs(x[1]-x[0]), abs(y[1]-y[0]))
-    cells = max(math.ceil(max(len(x)-1, len(y)-1)/8), min(128, max(1, math.floor(1024*resolution/step))))
+    cells = max(math.ceil(max(len(x)-1, len(y)-1)/max_axis), min(128, max(1, math.floor(1024*resolution/step))))
     output = []
     for row in range(0, len(y)-1, cells):
         for col in range(0, len(x)-1, cells):
@@ -28,7 +28,8 @@ def image_plan(x, y, origin, bounds, resolution=.25):
                    bounds[2] if c1 == len(x)-1 else x[c1]+origin[0],
                    bounds[3] if row == 0 else y[row]+origin[1]]
             requested = max(box[2]-box[0], box[3]-box[1])/resolution
-            pixels = min(1024, max(128, 2**math.ceil(math.log2(max(1, requested)))))
+            # A half-cell border should not double a whole block for <0.5% gain.
+            pixels = min(1024, max(128, 2**math.ceil(math.log2(max(1, requested)*.995))))
             w, h = box[2]-box[0], box[3]-box[1]
             output.append(dict(id=len(output), row0=row, row1=r1, col0=col, col1=c1,
                                bounds=box, pixels=pixels,
@@ -61,14 +62,8 @@ def save_image_block(report, item, block, image):
     return dict(block, path=str(path), width=image.width(), height=image.height(), coverage_fraction=info['coverage_fraction'])
 
 
-def finish_image_blocks(report, item, blocks, errors=None):
-    """Write a local mosaic and embed the exact per-block image/extent in HTML."""
-    folder = Path(report['report_dir'])
-    errors = errors or []
-    item['texture_tile_errors'] = errors
-    if not blocks:
-        return
-    bounds = item['scene_bounds']
+def write_mosaic(folder, path, bounds, blocks):
+    """Each point keeps its own native-resolution VRT, without a huge full-area raster."""
     dx = max((b['bounds'][2]-b['bounds'][0])/b['width'] for b in blocks)
     dy = max((b['bounds'][3]-b['bounds'][1])/b['height'] for b in blocks)
     nx, ny = math.ceil((bounds[2]-bounds[0])/dx), math.ceil((bounds[3]-bounds[1])/dy)
@@ -88,13 +83,33 @@ def finish_image_blocks(report, item, blocks, errors=None):
             b = block['bounds']
             ET.SubElement(source, 'DstRect', xOff=str((b[0]-bounds[0])/dx), yOff=str((bounds[3]-b[3])/dy),
                           xSize=str((b[2]-b[0])/dx), ySize=str((b[3]-b[1])/dy))
-    path = folder / ('ortofoto_' + item['model'] + '.vrt')
     ET.ElementTree(vrt).write(path, encoding='utf-8', xml_declaration=True)
+    return nx, ny, max(dx, dy)
+
+
+def finish_image_blocks(report, item, blocks, errors=None):
+    """Write local mosaics and embed exact per-block image/extent in HTML."""
+    folder = Path(report['report_dir'])
+    errors = errors or []
+    item['texture_tile_errors'] = errors
+    if not blocks:
+        return
+    path = folder / ('ortofoto_' + item['model'] + '.vrt')
+    nx, ny, resolution = write_mosaic(folder, path, item['scene_bounds'], blocks)
+    mosaics = []
+    for index in sorted({block['view_index'] for block in blocks if block.get('view_index') is not None}):
+        selected = [block for block in blocks if block.get('view_index') == index]
+        bounds = [min(b['bounds'][0] for b in selected), min(b['bounds'][1] for b in selected),
+                  max(b['bounds'][2] for b in selected), max(b['bounds'][3] for b in selected)]
+        target = folder / f'ortofoto_{item["model"]}_punkt_{index+1:02}.vrt'
+        width, height, step = write_mosaic(folder, target, bounds, selected)
+        mosaics.append(dict(index=index, path=str(target), width=width, height=height, resolution_m=round(step, 4)))
+    item['viewpoint_mosaics'] = mosaics
     embedded = []
     for block in blocks:
         image = 'data:image/png;base64,' + base64.b64encode(Path(block['path']).read_bytes()).decode('ascii')
         embedded.append(dict(id=block['id'], bounds=block['bounds'], row0=block['row0'], row1=block['row1'],
-                             col0=block['col0'], col1=block['col1'], image=image))
+                             col0=block['col0'], col1=block['col1'], view_index=block.get('view_index'), image=image))
     scene = Path(item['scene'])
     text = scene.read_text(encoding='utf-8')
     marker = '/*SCENE_TEXTURE_TILES*/[]'
@@ -107,7 +122,8 @@ def finish_image_blocks(report, item, blocks, errors=None):
     temporary.replace(scene)
     item.update(texture_tiles=blocks, texture_vrt=str(path))
     item.setdefault('texture_info', {}).update(tiles=len(blocks), mosaic_width=nx, mosaic_height=ny,
-                                               effective_resolution_m=round(max(dx, dy), 4),
+                                               effective_resolution_m=round(resolution, 4),
+                                               detail_resolution_m=min((m['resolution_m'] for m in mosaics), default=None),
                                                tile_errors=len(errors), local_mosaic=str(path))
 
 

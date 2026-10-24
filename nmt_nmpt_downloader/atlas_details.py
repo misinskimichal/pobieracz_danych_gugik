@@ -182,6 +182,12 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     profile_svg(data, spec['resource'], turbine, profile_path)
     # Crop before decimating. Neither interpolation nor a larger mesh invents source detail.
     radius = min(spec['radius'], float(options.get('scene_radius', 0)) or spec['radius'])
+    from .scene_views import view_points, default_point, detail_windows, save_view_points
+    selected_points = view_points(options)
+    for point in selected_points:
+        distance = math.hypot(point['x']-turbine['x'], point['y']-turbine['y'])
+        if distance < spec['radius']:
+            radius = max(radius, min(spec['radius'], distance+max(grid.step*3, distance*.05)))
     camera = options.get('scene_observer')
     camera_warning = None
     if camera:
@@ -191,6 +197,8 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
         else:
             camera_warning = 'Wybrane miejsce obserwacji jest poza kołem tego modelu. Zwiększ zasięg analizy lub wybierz bliższe miejsce.'
     vertices = int(options.get('scene_vertices', 513))
+    if selected_points:
+        vertices = min(vertices, 513)
     if vertices not in (129, 257, 513, 1025) or radius <= 0:
         raise ValueError('Nieprawidłowa gęstość lub promień sceny 3D')
     x0 = max(0, int(math.floor((turbine['x'] - radius - grid.xmin) / grid.step)))
@@ -209,20 +217,43 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
         return [[round(float(v), 2) if ok and np.isfinite(v) else None for v, ok in zip(line, mask)] for line, mask in zip(array, good)]
 
     from .scene_context import scene_context
+    start = default_point(options, grid, turbine, radius, ground, ground_valid, surface, surface_valid)
+    focus_points = selected_points or ([start] if start else [])
+    extras = {}
     forest, trees, buildings, context_summary = scene_context(scene_contexts or {}, transform_context, grid, turbine, radius, rows, cols,
                                                               ground, ground_valid, surface, surface_valid, event,
-                                                              tree_limit=int(options.get('scene_forest_trees', 5000)))
+                                                              tree_limit=int(options.get('scene_forest_trees', 5000)),
+                                                              focus_points=focus_points, detail_radius=options.get('scene_detail_radius', 120), extras=extras)
     bounds = [grid.xmin+x0*grid.step, grid.ymax-y1*grid.step, grid.xmin+x1*grid.step, grid.ymax-y0*grid.step]
     from .scene_imagery import image_plan
     texture_plan = image_plan(x.tolist(), y.tolist(), [turbine['x'], turbine['y']], bounds,
-                              options.get('scene_texture_resolution', .25))
+                              max(.5, options.get('scene_texture_resolution', .25)) if selected_points else options.get('scene_texture_resolution', .25))
+    base_texture_plan = list(texture_plan)
+    views = detail_windows(focus_points, grid, turbine, radius, rows, cols, ground, ground_valid, surface, surface_valid,
+                           extras.get('native_forest'), extras.get('native_buildings'), options.get('scene_detail_radius', 120), event)
+    for view_index, view in enumerate(views):
+        if not view.get('patch') or spec['resource'] != 'NMPT':
+            continue
+        patch = view['patch']
+        patch_bounds = [patch['x'][0]+turbine['x'], patch['y'][-1]+turbine['y'],
+                        patch['x'][-1]+turbine['x'], patch['y'][0]+turbine['y']]
+        plan = image_plan(patch['x'], patch['y'], [turbine['x'], turbine['y']], patch_bounds,
+                          min(.1, options.get('scene_texture_resolution', .25)), max_axis=4)
+        for block in plan:
+            block.update(id=len(texture_plan), view_index=view_index)
+            texture_plan.append(block)
+        patch['texture_grid'] = plan
+    save_view_points(folder, selected_points)
     labels = dict(lasy='Lasy', drzewa='Punkty drzew', budynki_3d='Budynki', korony_lasu='Ilustracyjne korony lasu')
     payload = dict(version=VERSION, resource=spec['resource'], turbine=str(turbine['id']), radius=radius, demo=bool(options.get('demo')),
                    origin=[turbine['x'], turbine['y']], height_system=spec.get('height', ''),
                    camera_observer=[float(camera[0])-turbine['x'], float(camera[1])-turbine['y']] if camera else None,
                    eye_height=float(options.get('scene_eye', options['eye'])), start_eye=bool(options.get('scene_start_eye', False)),
                    camera_warning=camera_warning,
-                   texture_grid=texture_plan,
+                   texture_grid=base_texture_plan, detail_views=views,
+                   initial_view=int(options.get('scene_initial_view', 0)),
+                   detail_radius=float(options.get('scene_detail_radius', 120)),
+                   building_mask=extras.get('building_mask', []),
                    profile_radius=spec['radius'], forest=forest, trees=trees, buildings=buildings, context_summary=context_summary,
                    context_notes=[f'{labels.get(item["role"], item["role"])}: {item["features"]} obiektów, pominięto {item["skipped"]}.' +
                                   (' Osiągnięto limit podglądu.' if item['truncated'] else '') for item in context_summary],
@@ -237,12 +268,15 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     scene = folder / ('scena_3d_' + spec['resource'] + '.html')
     template = Path(__file__).with_name('scene3d.html').read_text(encoding='utf-8')
     template = template.replace('/*SCENE_RENDERER*/', Path(__file__).with_name('scene_webgl.js').read_text(encoding='utf-8'))
+    template = template.replace('/*SCENE_APPEARANCE*/', Path(__file__).with_name('scene_appearance.js').read_text(encoding='utf-8'))
     # Avoid closing an inline script if a user-supplied source ID contains HTML.
     serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')
     scene.write_text(template.replace('/*SCENE_DATA*/', serialized), encoding='utf-8')
     fallback = folder / ('scena_3d_lekka_' + spec['resource'] + '.html')
     light_stride = max(1, int(math.ceil(max(len(rows), len(cols)) / 128)))
     light = dict(payload)
+    light.pop('detail_views', None)
+    light.pop('texture_grid', None)
     for key in ['ground', 'surface', 'forest']:
         light[key] = [row[::light_stride] for row in payload[key][::light_stride]]
     for key in ['x', 'y']:
@@ -254,5 +288,7 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     return dict(model=spec['resource'], turbine=str(turbine['id']), profile=str(profile_path), scene=str(scene),
                 fallback_scene=str(fallback), scene_bounds=bounds, scene_radius=radius, vertices=[len(cols), len(rows)],
                 context_summary=context_summary, texture_plan=texture_plan, azimuth=data['azimuth'], preview_step_m=grid.step * stride,
+                viewpoints=[dict(name=view['name'], point=view['point'], eye=view['eye'], error=view.get('error'),
+                                 detail_step_m=view.get('patch', {}).get('step_m')) for view in views],
                 profile_status=data['status'], camera_observer=camera, camera_warning=camera_warning,
                 eye_height=payload['eye_height'])

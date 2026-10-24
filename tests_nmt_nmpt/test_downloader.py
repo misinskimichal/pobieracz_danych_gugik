@@ -1344,6 +1344,139 @@ class AtlasTests(unittest.TestCase):
         self.assertTrue(summaries[-1]['truncated'])
         self.assertTrue(all(t['height'] == 20 for t in trees))
 
+    def test_roof_fit_recovers_gable_and_plane_without_changing_source(self):
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.scene_context import building_preview
+        grid = Grid(0, 100, 1, 100, 100)
+        ground = np.full((100, 100), 100.)
+        valid = np.ones(ground.shape, bool)
+        yy, xx = np.mgrid[99.5:-.5:-1, .5:100.5:1]
+        geometry = QgsGeometry.fromWkt('POLYGON ((20 20,60 20,60 50,20 50,20 20))')
+        mask = (xx > 20) & (xx < 60) & (yy > 20) & (yy < 50)
+        for expected, roof in [('nmpt_fit_gable', 106+5*(1-abs((yy-35)/15))),
+                               ('nmpt_fit_plane', 106+.2*(xx-20))]:
+            surface = ground.copy()
+            surface[mask] = roof[mask]
+            before = surface.copy()
+            item = building_preview(geometry, grid, dict(x=40, y=35), 80, ground, valid, surface, valid)
+            self.assertEqual(item['roof_model'], expected)
+            self.assertLess(item['roof_rmse_m'], .01)
+            self.assertTrue(item['roof_faces'])
+            self.assertTrue(item['wall_edges'])
+            if expected.endswith('gable'):
+                self.assertTrue(any(abs(p[2]-111) < .01 for face in item['roof_faces'] for p in face))
+            np.testing.assert_array_equal(surface, before)
+
+    def test_point_mode_keeps_native_detail_with_a_lighter_background(self):
+        import re
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.atlas_details import write_details
+        grid = Grid(0, 2001, 1, 2001, 2001)
+        ground = np.full((2001, 2001), 100., np.float32)
+        valid = np.ones(ground.shape, bool)
+        points = [dict(name='A', x=1000, y=1500, eye=1.7), dict(name='B', x=1500, y=1000, eye=1.7)]
+        detail = write_details(self.root, dict(resource='NMPT', radius=1000), grid, dict(id='A', x=1000, y=1000, hub=30, diameter=20),
+                               ground, valid, ground, valid, 100, dict(eye=1.7, curvature=False, scene_vertices=1025,
+                                                                       scene_viewpoints=points, scene_detail_radius=80), self.event)
+        data = json.loads(re.search(r'const scene=(.*?);\n', Path(detail['scene']).read_text()).group(1))
+        self.assertGreater(detail['preview_step_m'], 1)
+        self.assertLessEqual(max(detail['vertices']), 513)
+        self.assertTrue(all(view['patch']['step_m'] == 1 for view in data['detail_views']))
+        self.assertLessEqual(sum(block['width_px']*block['height_px'] for block in data['texture_grid']), 16*1024**2)
+        self.assertTrue(any(block.get('view_index') is not None for block in detail['texture_plan']))
+        self.assertNotIn('"detail_views"', Path(detail['fallback_scene']).read_text())
+
+    def test_detail_windows_use_native_grid_match_coarse_edges_and_report_invalid_points(self):
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.scene_views import detail_windows, view_points
+        grid = Grid(0, 401, 1, 401, 401)
+        ground = np.full((401, 401), 100.)
+        valid = np.ones(ground.shape, bool)
+        valid[120, 200] = False
+        rows, cols = np.arange(20, 381, 4), np.arange(20, 381, 4)
+        points = view_points(dict(scene_viewpoints=[dict(name='A', x=200, y=300, eye=1.7), dict(name='B', x=1000, y=1000, eye=1.7)]))
+        views = detail_windows(points, grid, dict(x=200, y=200), 180, rows, cols, ground, valid, ground, valid,
+                               None, None, 60, self.event)
+        self.assertIsNone(views[0].get('error'))
+        self.assertIn('error', views[1])
+        patch = views[0]['patch']
+        self.assertEqual(patch['step_m'], 1)
+        r0, c0, r1, c1 = patch['coarse']
+        self.assertEqual(patch['x'][0], (cols[c0]+.5)-200)
+        self.assertEqual(patch['x'][-1], (cols[c1]+.5)-200)
+        self.assertEqual(patch['y'][0], 401-(rows[r0]+.5)-200)
+        self.assertEqual(patch['y'][-1], 401-(rows[r1]+.5)-200)
+        self.assertTrue(any(value is None for line in patch['ground'] for value in line))
+        self.assertLessEqual(len(patch['x']), 513)
+        with self.assertRaises(ValueError):
+            view_points(dict(scene_viewpoints=[points[0]]*13))
+
+    def test_multiple_map_clicks_update_point_table_layer_and_scene_without_new_analysis(self):
+        import hashlib
+        from qgis.PyQt.QtCore import Qt
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from qgis.core import QgsPointXY, QgsCoordinateTransform
+        from qgis.gui import QgsMapCanvas, QgsMapToolPan
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        report = self.engine().run()
+        paths = [Path(p['paths']['count']) for p in report['products']]
+        before = [hashlib.sha256(path.read_bytes()).hexdigest() for path in paths]
+        window, canvas = QMainWindow(), QgsMapCanvas()
+        canvas.setDestinationCrs(QgsCoordinateReferenceSystem('EPSG:3857'))
+        pan = QgsMapToolPan(canvas)
+        canvas.setMapTool(pan)
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+            def mapCanvas(self): return canvas
+        view = WorkspaceDialog(Iface())
+        try:
+            with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning') as warning:
+                view.load_report(str(Path(report['report_dir'])/'report.json'))
+                view.collect_viewpoints()
+                transform = QgsCoordinateTransform(QgsCoordinateReferenceSystem('EPSG:2180'), canvas.mapSettings().destinationCrs(), QgsProject.instance().transformContext())
+                view.scene_point_picked(transform.transform(QgsPointXY(70.5, 100.5)), Qt.LeftButton)
+                view.scene_point_picked(transform.transform(QgsPointXY(90.5, 100.5)), Qt.LeftButton)
+                self.assertIs(canvas.mapTool(), view.point_tool)
+                self.assertEqual(view.viewpoints.rowCount(), 2)
+                self.assertAlmostEqual(view.read_viewpoints()[0]['x'], 70.5, places=2)
+                self.assertEqual(view.viewpoint_layer.featureCount(), 2)
+                self.assertIn('2/12', view.collector_label.text())
+                view.scene_point_picked(QgsPointXY(90.5, 100.5), Qt.RightButton)
+                self.assertIs(canvas.mapTool(), pan)
+                self.assertIsNone(view.point_collector)
+                with patch('nmt_nmpt_downloader.atlas.AtlasEngine.run') as analysis:
+                    view.refresh_scene()
+                    DownloaderTests.wait_until(self, lambda: view.task is None and view.export_job is None, 15000)
+                    analysis.assert_not_called()
+                self.assertFalse(warning.called, warning.call_args)
+                detail = view.preferred_detail()
+                self.assertEqual(len(detail['viewpoints']), 2)
+                self.assertTrue(all(not p['error'] for p in detail['viewpoints']))
+                data = json.loads((Path(report['report_dir'])/'punkty_wizualizacji.geojson').read_text())
+                self.assertEqual(len(data['features']), 2)
+                self.assertEqual(view.viewpoint_layer.providerType(), 'ogr')
+                project_file = self.root/'punkty.qgz'
+                self.assertTrue(QgsProject.instance().write(str(project_file)))
+                restored = QgsProject()
+                self.assertTrue(restored.read(str(project_file)))
+                stored_layer = next(layer for layer in restored.mapLayers().values() if layer.customProperty('nmt_nmpt/viewpoints', False))
+                self.assertEqual(stored_layer.featureCount(), 2)
+                restored.clear()
+                view.load_report(str(Path(report['report_dir'])/'report.json'))
+                self.assertEqual(view.viewpoints.rowCount(), 2)
+                self.assertEqual(view.viewpoint_layer.providerType(), 'ogr')
+                view.refresh_scene()
+                self.assertEqual(view.viewpoint_layer.providerType(), 'memory')
+                DownloaderTests.wait_until(self, lambda: view.task is None and view.export_job is None, 15000)
+                self.assertEqual(view.viewpoint_layer.providerType(), 'ogr')
+            self.assertEqual(before, [hashlib.sha256(path.read_bytes()).hexdigest() for path in paths])
+        finally:
+            view.stop_scene_picker(show=False)
+            view.deleteLater()
+            canvas.deleteLater()
+
     def test_image_plan_is_bounded_and_uses_exact_mesh_edges(self):
         from nmt_nmpt_downloader.scene_imagery import image_plan
         x, y = np.linspace(-1000, 1000, 1001), np.linspace(1000, -1000, 1001)
@@ -1373,6 +1506,7 @@ class AtlasTests(unittest.TestCase):
             image = QImage(block['width_px'], block['height_px'], QImage.Format_RGBA8888)
             image.fill(QColor(200 if block['col0'] == 0 else 40, 60, 100))
             blocks.append(save_image_block(report, item, block, image))
+        blocks[0]['view_index'] = 0
         finish_image_blocks(report, item, blocks)
         dataset = gdal.Open(item['texture_vrt'])
         self.assertIsNotNone(dataset)
@@ -1385,6 +1519,10 @@ class AtlasTests(unittest.TestCase):
         self.assertIn('data:image/png;base64,', scene.read_text())
         self.assertNotIn('/*SCENE_TEXTURE_TILES*/', scene.read_text())
         self.assertEqual(item['texture_info']['tiles'], len(plan))
+        self.assertEqual(len(item['viewpoint_mosaics']), 1)
+        point_mosaic = gdal.Open(item['viewpoint_mosaics'][0]['path'])
+        self.assertIsNotNone(point_mosaic)
+        self.assertEqual(point_mosaic.GetRasterBand(1).ReadAsArray(1, 1, 1, 1)[0, 0], 200)
         self.assertFalse(make_preview(item, blocks).isNull())
         # The files can also be moved together and retain their relative source references.
         import shutil

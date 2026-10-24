@@ -10,7 +10,7 @@ from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGroupBox,
     QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSpinBox, QTableWidget, QVBoxLayout, QWidget,
+    QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsCoordinateTransformContext, QgsFieldProxyModel,
                        QgsMapLayerProxyModel, QgsProject, QgsTask, QgsVectorLayer, QgsVectorLayerFeatureSource)
@@ -131,6 +131,7 @@ class WorkspaceDialog(QDialog):
         self.running_atlas = True
         self.scene_dirty, self.open_after_scene_refresh, self.loading_scene_controls = False, False, False
         self.scene_only, self.scene_observer, self.point_tool, self.previous_map_tool = False, None, None, None
+        self.collecting_viewpoints, self.viewpoint_layer, self.point_collector = False, None, None
         self.setWindowTitle(PLUGIN_NAME + ' · Atlas widoczności ' + VERSION)
         self.resize(1130, 940)
         self.setStyleSheet('QGroupBox{border:1px solid #cddce0;border-radius:7px;margin-top:10px;padding:12px 8px 6px}QGroupBox::title{subcontrol-origin:margin;left:12px;padding:0 5px}QPushButton#primary{background:#164b5d;color:white;padding:10px 20px;border:0;border-radius:5px;font-weight:bold}')
@@ -240,13 +241,35 @@ class WorkspaceDialog(QDialog):
         point_row = QWidget()
         point_layout = QHBoxLayout(point_row)
         point_layout.setContentsMargins(0, 0, 0, 0)
-        self.pick_point_button = QPushButton('Wskaż miejsce patrzenia w QGIS')
+        self.pick_point_button = QPushButton('Wskaż jedno miejsce / zmień wybrany punkt')
         self.clear_point_button = QPushButton('Wyczyść punkt')
         self.pick_point_button.clicked.connect(self.pick_scene_point)
         self.clear_point_button.clicked.connect(self.clear_scene_point)
         point_layout.addWidget(self.pick_point_button)
         point_layout.addWidget(self.clear_point_button)
         detail_form.addRow(point_row)
+        self.collect_points_button = QPushButton('Klikaj punkty wizualizacji na mapie · zakończ Escape / prawym przyciskiem')
+        self.collect_points_button.clicked.connect(self.collect_viewpoints)
+        detail_form.addRow(self.collect_points_button)
+        self.viewpoints = QTableWidget(0, 4)
+        self.viewpoints.setHorizontalHeaderLabels(['Nazwa', 'X · EPSG:2180', 'Y · EPSG:2180', 'Oko [m]'])
+        self.viewpoints.setMaximumHeight(175)
+        self.viewpoints.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.viewpoints.itemChanged.connect(self.mark_scene_dirty)
+        detail_form.addRow('Przygotowane punkty (do 12):', self.viewpoints)
+        self.remove_point_button = QPushButton('Usuń wybrany punkt')
+        self.remove_point_button.clicked.connect(self.remove_viewpoint)
+        detail_form.addRow(self.remove_point_button)
+        self.detail_radius = metric(120, 30, 250)
+        detail_form.addRow('Szczegółowe otoczenie każdego punktu:', self.detail_radius)
+        self.detail_radius.valueChanged.connect(self.mark_scene_dirty)
+        point_note = QLabel('Każdy punkt: lokalny detal do 513 × 513, zdjęcie z celem 0,10 m/px i do 16 dodatkowych kafli. Na próbę wybierz 2–3 miejsca w obszarze atlasu. W HTML przełączysz je listą; otoczenie poza detalem będzie lżejsze.')
+        point_note.setWordWrap(True)
+        detail_form.addRow(point_note)
+        self.prepare_points_button = QPushButton('Przygotuj widoki punktów · bez przeliczania widoczności')
+        self.prepare_points_button.setEnabled(False)
+        self.prepare_points_button.clicked.connect(self.refresh_scene)
+        detail_form.addRow(self.prepare_points_button)
         self.scene_point_label = QLabel('Punkt nie jest wymagany — w scenie klikniesz własne miejsce na mapce. Wysokość początkowa = oko nad gruntem NMT.')
         self.scene_point_label.setWordWrap(True)
         detail_form.addRow(self.scene_point_label)
@@ -468,7 +491,9 @@ class WorkspaceDialog(QDialog):
         from qgis.core import QgsRasterLayer
         detail = self.preferred_detail()
         if detail and detail.get('texture_vrt'):
-            layer = QgsRasterLayer(detail['texture_vrt'], 'Ortofotomapa lokalna · ' + detail['model'], 'gdal')
+            point = next((m for m in detail.get('viewpoint_mosaics', []) if m['index'] == self.viewpoints.currentRow()), None)
+            filename = point['path'] if point else detail['texture_vrt']
+            layer = QgsRasterLayer(filename, 'Ortofotomapa lokalna · ' + detail['model'] + (f' · punkt {point["index"]+1}' if point else ''), 'gdal')
             if layer.isValid():
                 QgsProject.instance().addMapLayer(layer)
             else:
@@ -582,6 +607,8 @@ class WorkspaceDialog(QDialog):
 
     def view_options(self):
         return dict(view_turbine=self.view_turbine.value(), view_azimuth=self.view_azimuth.value(),
+                    scene_viewpoints=self.read_viewpoints(), scene_detail_radius=self.detail_radius.value(),
+                    scene_initial_view=max(0, self.viewpoints.currentRow()),
                     scene_vertices=self.scene_quality.currentData(), scene_radius=self.scene_radius.value(),
                     scene_eye=self.eye.value(), scene_start_eye=self.scene_start_eye.isChecked(), scene_observer=self.scene_observer,
                     scene_context_layer_ids={role: combo.currentLayer().id() for role, combo in self.scene_layers.items() if combo.currentLayer()},
@@ -611,7 +638,114 @@ class WorkspaceDialog(QDialog):
         canvas.setMapTool(self.point_tool)
         self.iface.mainWindow().statusBar().showMessage('Kliknij miejsce patrzenia. Escape anuluje wybór.')
 
+    def read_viewpoints(self):
+        from .scene_views import view_points
+        points = []
+        for row in range(self.viewpoints.rowCount()):
+            points.append(dict(name=self.viewpoints.item(row, 0).text(), x=float(self.viewpoints.item(row, 1).text()),
+                               y=float(self.viewpoints.item(row, 2).text()),
+                               eye=float(self.viewpoints.item(row, 3).text().replace(',', '.'))))
+        return view_points(dict(scene_viewpoints=points, scene_eye=self.eye.value()))
+
+    def set_viewpoints(self, points):
+        self.viewpoints.blockSignals(True)
+        self.viewpoints.setRowCount(len(points))
+        for row, point in enumerate(points):
+            for col, value in enumerate([point['name'], f'{point["x"]:.3f}', f'{point["y"]:.3f}', str(point['eye'])]):
+                item = QTableWidgetItem(str(value))
+                if col in (1, 2):
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                self.viewpoints.setItem(row, col, item)
+        self.viewpoints.blockSignals(False)
+        self.sync_viewpoint_layer()
+        if self.point_collector is not None:
+            self.collector_label.setText(f'Zebrano {len(points)}/12 punktów.\n\n' +
+                                         '\n'.join(f'{p["name"]}: {p["x"]:.1f}, {p["y"]:.1f}' for p in points[-5:]))
+
+    def sync_viewpoint_layer(self):
+        from qgis.core import QgsFeature, QgsField, QgsGeometry, QgsPointXY
+        from qgis.PyQt.QtCore import QVariant
+        points = self.read_viewpoints()
+        if not points and self.viewpoint_layer is None:
+            return
+        try:
+            if self.viewpoint_layer is not None and not self.viewpoint_layer.isValid():
+                self.viewpoint_layer = None
+        except RuntimeError:
+            self.viewpoint_layer = None
+        if self.viewpoint_layer is None or QgsProject.instance().mapLayer(self.viewpoint_layer.id()) is None:
+            self.viewpoint_layer = QgsVectorLayer('Point?crs=EPSG:2180', 'Punkty wizualizacji 3D', 'memory')
+            self.viewpoint_layer.dataProvider().addAttributes([QgsField('nazwa', QVariant.String), QgsField('oko_m', QVariant.Double)])
+            self.viewpoint_layer.updateFields()
+            self.viewpoint_layer.setCustomProperty('nmt_nmpt/viewpoints', True)
+            QgsProject.instance().addMapLayer(self.viewpoint_layer)
+        elif self.viewpoint_layer.providerType() != 'memory':
+            self.viewpoint_layer.setDataSource('Point?crs=EPSG:2180', self.viewpoint_layer.name(), 'memory')
+            self.viewpoint_layer.dataProvider().addAttributes([QgsField('nazwa', QVariant.String), QgsField('oko_m', QVariant.Double)])
+            self.viewpoint_layer.updateFields()
+        provider = self.viewpoint_layer.dataProvider()
+        provider.deleteFeatures([f.id() for f in self.viewpoint_layer.getFeatures()])
+        features = []
+        for point in points:
+            feature = QgsFeature(self.viewpoint_layer.fields())
+            feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(point['x'], point['y'])))
+            feature.setAttributes([point['name'], point['eye']])
+            features.append(feature)
+        provider.addFeatures(features)
+        self.viewpoint_layer.updateExtents()
+        self.viewpoint_layer.triggerRepaint()
+
+    def persist_viewpoint_layer(self):
+        if self.viewpoint_layer is None or not self.report_dir:
+            return
+        path = Path(self.report_dir)/'punkty_wizualizacji.geojson'
+        if path.is_file() and QgsProject.instance().mapLayer(self.viewpoint_layer.id()) is not None:
+            try:
+                data = json.loads(path.read_text(encoding='utf-8'))
+                stored = [(str(f['properties']['nazwa']), round(float(f['geometry']['coordinates'][0]), 3),
+                           round(float(f['geometry']['coordinates'][1]), 3), float(f['properties']['oko_m'])) for f in data['features']]
+                current = [(p['name'], round(p['x'], 3), round(p['y'], 3), p['eye']) for p in self.read_viewpoints()]
+                if stored != current:
+                    return
+            except (KeyError, TypeError, ValueError):
+                return
+            self.viewpoint_layer.setDataSource(str(path), 'Punkty wizualizacji 3D', 'ogr')
+            self.viewpoint_layer.setCustomProperty('nmt_nmpt/viewpoints', True)
+
+    def remove_viewpoint(self):
+        row = self.viewpoints.currentRow()
+        if row >= 0:
+            self.viewpoints.removeRow(row)
+            self.sync_viewpoint_layer()
+            self.mark_scene_dirty()
+
+    def collect_viewpoints(self):
+        if self.task or self.export_job or self.point_tool:
+            return
+        self.pick_scene_point()
+        if self.point_tool:
+            self.collecting_viewpoints = True
+            self.point_collector = QDialog(self.iface.mainWindow(), Qt.Tool)
+            self.point_collector.setWindowTitle('Punkty wizualizacji 3D')
+            panel = QVBoxLayout(self.point_collector)
+            self.collector_label = QLabel(f'Zebrano {self.viewpoints.rowCount()}/12 punktów. Klikaj miejsca na mapie.\nEscape / prawy przycisk kończy zbieranie.')
+            self.collector_label.setWordWrap(True)
+            panel.addWidget(self.collector_label)
+            finish = QPushButton('Zakończ zbieranie i wróć do ustawień')
+            finish.clicked.connect(lambda: self.stop_scene_picker())
+            panel.addWidget(finish)
+            self.point_collector.finished.connect(lambda: self.stop_scene_picker())
+            self.point_collector.resize(360, 200)
+            self.point_collector.show()
+            self.iface.mainWindow().statusBar().showMessage('Klikaj punkty widokowe (do 12). Prawy przycisk / Escape kończy zbieranie.')
+
     def stop_scene_picker(self, show=True):
+        self.collecting_viewpoints = False
+        if self.point_collector is not None:
+            collector, self.point_collector = self.point_collector, None
+            collector.blockSignals(True)
+            collector.close()
+            collector.deleteLater()
         if self.point_tool:
             tool = self.point_tool
             canvas = self.iface.mapCanvas()
@@ -637,11 +771,28 @@ class WorkspaceDialog(QDialog):
                 if not all(math.isfinite(v) for v in (projected.x(), projected.y())):
                     raise ValueError('Nieprawidłowe współrzędne')
                 self.scene_observer = [projected.x(), projected.y()]
+                if self.collecting_viewpoints:
+                    points = self.read_viewpoints()
+                    if len(points) >= 12:
+                        self.stop_scene_picker()
+                        QMessageBox.warning(self, PLUGIN_NAME, 'Limit 12 punktów. Usuń punkt albo przygotuj drugi zestaw.')
+                        return
+                    points.append(dict(name=f'Punkt {len(points)+1}', x=projected.x(), y=projected.y(), eye=self.eye.value()))
+                    self.set_viewpoints(points)
+                    self.viewpoints.selectRow(len(points)-1)
+                elif self.viewpoints.rowCount():
+                    points = self.read_viewpoints()
+                    row = max(0, self.viewpoints.currentRow())
+                    points[row].update(x=projected.x(), y=projected.y(), eye=self.eye.value())
+                    self.set_viewpoints(points)
+                    self.viewpoints.selectRow(row)
                 self.scene_start_eye.setChecked(True)
                 self.update_scene_point_label()
                 self.mark_scene_dirty()
             except Exception as exc:
                 QMessageBox.warning(self, PLUGIN_NAME, 'Nie można wskazać miejsca. Sprawdź CRS mapy. ' + str(exc))
+            if self.collecting_viewpoints:
+                return
         self.stop_scene_picker()
 
     def start(self, local_only=False, previous_report=None):
@@ -704,10 +855,18 @@ class WorkspaceDialog(QDialog):
     def refresh_scene(self):
         if self.task or self.export_job or not self.last_report:
             return
+        try:
+            view_options = self.view_options()
+            # Release the previous GeoJSON provider before replacing that file (Windows).
+            self.sync_viewpoint_layer()
+        except (KeyError, TypeError, ValueError) as exc:
+            self.open_after_scene_refresh = False
+            QMessageBox.warning(self, PLUGIN_NAME, 'Sprawdź tabelę punktów: ' + str(exc))
+            return
         self.scene_only = True
         contexts = {role: (QgsVectorLayerFeatureSource(combo.currentLayer()), combo.currentLayer().crs())
                     for role, combo in self.scene_layers.items() if combo.currentLayer() is not None}
-        self.task = SceneRefreshTask(self.last_report, self.view_options(),
+        self.task = SceneRefreshTask(self.last_report, view_options,
                                      QgsCoordinateTransformContext(QgsProject.instance().transformContext()), contexts)
         self.task.message.connect(self.stage.setText)
         self.task.message.connect(self.log.appendPlainText)
@@ -846,6 +1005,13 @@ class WorkspaceDialog(QDialog):
     def complete(self, report):
         auto_open = self.open_after_scene_refresh and self.scene_only
         self.open_after_scene_refresh = False
+        invalid_views = [p['name']+': '+p['error'] for d in report.get('details', []) if d['model'] == 'NMPT'
+                         for p in d.get('viewpoints', []) if p.get('error')]
+        report['scene_view_warnings'] = invalid_views
+        try:
+            self.persist_viewpoint_layer()
+        except (RuntimeError, OSError) as exc:
+            self.log.appendPlainText('Warstwa punktów: ' + str(exc))
         if self.report_dir:
             from .core import atomic_json
             try:
@@ -861,6 +1027,7 @@ class WorkspaceDialog(QDialog):
         self.scene_button.setEnabled(bool(report.get('details')))
         self.rerun_button.setEnabled(bool(report.get('turbines') and report.get('products')))
         self.refresh_scene_button.setEnabled(bool(report.get('turbines') and report.get('products')))
+        self.prepare_points_button.setEnabled(bool(report.get('turbines') and report.get('products')))
         text = {'completed': 'Gotowe — atlas wykonany' if self.running_atlas else 'Pobieranie wykonane',
                 'completed_with_gaps': 'Zakończono — sprawdź oznaczone braki danych',
                 'canceled': 'Anulowano; ukończone wyniki zachowano', 'failed': 'Zadanie nie powiodło się'}[report['state']]
@@ -879,6 +1046,8 @@ class WorkspaceDialog(QDialog):
                 '\n' + report['presentation_error'] if report.get('presentation_error') else '')
             if report.get('scene_texture_warnings'):
                 text += '\n' + '\n'.join(report['scene_texture_warnings'])
+        if invalid_views:
+            text += '\nPominięte punkty widokowe:\n' + '\n'.join(invalid_views)
         self.stage.setText(text)
         self.log.appendPlainText(text)
         self.inputs.setEnabled(True)
@@ -988,6 +1157,10 @@ class WorkspaceDialog(QDialog):
                     widget.setValue(values[key])
             self.eye.setValue(view.get('scene_eye', opts.get('eye', 1.7)))
             self.scene_quality.setCurrentIndex(max(0, self.scene_quality.findData(view.get('scene_vertices', 513))))
+            self.set_viewpoints(view.get('scene_viewpoints', []))
+            if self.viewpoints.rowCount():
+                self.viewpoints.selectRow(min(self.viewpoints.rowCount()-1, int(view.get('scene_initial_view', 0))))
+            self.detail_radius.setValue(view.get('scene_detail_radius', 120))
             self.texture_resolution.setCurrentIndex(max(0, self.texture_resolution.findData(view.get('scene_texture_resolution', .25))))
             self.forest_trees.setCurrentIndex(max(0, self.forest_trees.findData(view.get('scene_forest_trees', 5000))))
             self.scene_observer = view.get('scene_observer')
@@ -1023,12 +1196,17 @@ class WorkspaceDialog(QDialog):
                     local = path.parent / ('ortofoto_' + detail['model']) / Path(tile['path']).name
                     if local.is_file():
                         tile['path'] = str(local)
+                for mosaic in detail.get('viewpoint_mosaics', []):
+                    local = path.parent / Path(mosaic['path']).name
+                    if local.is_file():
+                        mosaic['path'] = str(local)
             if (path.parent / 'atlas.html').is_file():
                 report.setdefault('presentation', {})['html'] = str(path.parent / 'atlas.html')
             self.last_report, self.report_dir, self.running_atlas = report, str(path.parent), True
             self.atlas_layers = {}
             self.rerun_button.setEnabled(True)
             self.refresh_scene_button.setEnabled(True)
+            self.prepare_points_button.setEnabled(True)
             self.report_button.setEnabled(True)
             self.map_button.setEnabled(True)
             self.ray_button.setEnabled(bool(report.get('rays_gpkg')))
@@ -1036,6 +1214,7 @@ class WorkspaceDialog(QDialog):
             self.scene_button.setEnabled(bool(report.get('details')))
             self.scene_dirty = False
             self.update_texture_state()
+            self.persist_viewpoint_layer()
             self.stage.setText('Wczytano poprzedni zestaw. Zmień parametry i kliknij Przelicz ponownie. Pola piasta_m / srednica_m zachowują wysokości; puste pola oznaczają stałe wartości.')
         except Exception as exc:
             QMessageBox.warning(self, PLUGIN_NAME, 'Nie można odtworzyć atlasu: ' + str(exc))

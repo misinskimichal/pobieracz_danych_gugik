@@ -55,18 +55,25 @@ def building_preview(geometry, grid, turbine, radius, ground, ground_valid, surf
         return None
     triangles = [[[float(vertices[i+j]), float(-vertices[i+j+2])] for j in (0, 3, 6)]
                  for i in range(0, len(vertices), 9)]
-    return dict(rings=rings, roof_triangles=triangles, ground=base, roof=roof,
-                height=roof-base, method='obrys budynku; płaski dach na maksimum NMPT, grunt minimum NMT')
+    yy, xx = np.meshgrid(grid.ymax-(ys+.5)*grid.step-turbine['y'], grid.xmin+(xs+.5)*grid.step-turbine['x'], indexing='ij')
+    from .scene_architecture import fit_roof
+    fitted = fit_roof(np.c_[xx[good], yy[good]], cover, rings, triangles, base, roof, step)
+    return dict(rings=rings, roof_triangles=triangles, ground=base, roof=roof, **fitted,
+                height=roof-base, method='obrys i wysokości NMT/NMPT; dach dopasowany, jeśli dane wystarczają; elewacje poglądowe')
 
 
 def scene_context(contexts, transform_context, grid, turbine, radius, rows, cols,
-                  ground, ground_valid, surface, surface_valid, event, tree_limit=5000):
+                  ground, ground_valid, surface, surface_valid, event, tree_limit=5000,
+                  focus_points=None, detail_radius=120, extras=None):
     from .atlas import srs2180
     forest = np.zeros((len(rows), len(cols)), np.uint8)
     trees, buildings, summaries = [], [], []
     target = QgsCoordinateReferenceSystem('EPSG:2180')
     bounds = QgsRectangle(turbine['x'] - radius, turbine['y'] - radius,
                           turbine['x'] + radius, turbine['y'] + radius)
+    building_vector = ogr.GetDriverByName('Memory').CreateDataSource('')
+    building_layer = building_vector.CreateLayer('buildings', srs2180(), ogr.wkbUnknown)
+    native_forest = None
     for role, (source, crs) in contexts.items():
         check_cancel(event)
         forward = QgsCoordinateTransform(crs, target, transform_context)
@@ -109,6 +116,11 @@ def scene_context(contexts, transform_context, grid, turbine, radius, rows, cols
                     item = building_preview(part, grid, turbine, radius, ground, ground_valid, surface, surface_valid)
                     if item:
                         buildings.append(item)
+                        models = info.setdefault('roof_models', {})
+                        models[item['roof_model']] = models.get(item['roof_model'], 0)+1
+                        output = ogr.Feature(building_layer.GetLayerDefn())
+                        output.SetGeometry(ogr.CreateGeometryFromWkb(bytes(part.asWkb())))
+                        building_layer.CreateFeature(output)
                         accepted = True
                 info['features' if accepted else 'skipped'] += 1
             elif role == 'drzewa' and QgsWkbTypes.geometryType(geometry.wkbType()) == QgsWkbTypes.PointGeometry:
@@ -140,25 +152,79 @@ def scene_context(contexts, transform_context, grid, turbine, radius, rows, cols
                 raise ValueError('Nie udało się przygotować pokrycia lasów dla sceny')
             forest = raster.ReadAsArray()
             raster = None
+            if focus_points:
+                native = gdal.GetDriverByName('MEM').Create('', grid.width, grid.height, 1, gdal.GDT_Byte)
+                native.SetGeoTransform((grid.xmin, grid.step, 0, grid.ymax, 0, -grid.step))
+                native.SetProjection(srs2180().ExportToWkt())
+                if gdal.RasterizeLayer(native, [1], polygons, burn_values=[1]) != 0:
+                    raise ValueError('Nie można przygotować lasów wokół punktów')
+                native_forest = native.ReadAsArray()
+                native = None
         vector = None
         summaries.append(info)
     if 'lasy' in contexts and 'drzewa' not in contexts:
         # Illustrative samples inside actual forest polygons, not detected individual trees.
         spacing = max(1, math.ceil(8/(grid.step*(int(cols[1]-cols[0]) if len(cols) > 1 else 1))))
         check_cancel(event)
-        ys, xs = rows[::spacing], cols[::spacing]
+        focused = bool(focus_points and native_forest is not None)
+        if focused:
+            spacing = max(1, round(3.5/grid.step))
+            ys, xs = np.arange(0, grid.height, spacing), np.arange(0, grid.width, spacing)
+        else:
+            ys, xs = rows[::spacing], cols[::spacing]
         gx = grid.xmin+(xs+.5)*grid.step-turbine['x']
         gy = grid.ymax-(ys+.5)*grid.step-turbine['y']
         heights = surface[np.ix_(ys, xs)]-ground[np.ix_(ys, xs)]
-        mask = (forest[::spacing, ::spacing] != 0) & ground_valid[np.ix_(ys, xs)] & surface_valid[np.ix_(ys, xs)]
+        forest_samples = native_forest[np.ix_(ys, xs)] if focused else forest[::spacing, ::spacing]
+        mask = (forest_samples != 0) & ground_valid[np.ix_(ys, xs)] & surface_valid[np.ix_(ys, xs)]
         mask &= (gy[:, None]**2 + gx[None, :]**2 <= radius**2) & np.isfinite(heights) & (heights >= 2) & (heights <= 80)
-        candidates = np.flatnonzero(mask)
         tree_limit = max(100, min(10000, int(tree_limit)))
-        indices = candidates[np.linspace(0, len(candidates)-1, min(tree_limit, len(candidates)), dtype=int)] if candidates.size else []
+        if focused:
+            priorities = np.full(mask.shape, np.inf, np.float32)
+            for point in focus_points:
+                distance = (gx[None, :]+turbine['x']-point['x'])**2+(gy[:, None]+turbine['y']-point['y'])**2
+                priorities = np.minimum(priorities, distance)
+            mask &= priorities <= (float(detail_radius)*1.35)**2
+        candidates = np.flatnonzero(mask)
+        if focused and candidates.size:
+            # Select nearby points first per view, then deduplicate overlapping detail circles.
+            selected = []
+            cy, cx = np.divmod(candidates, len(xs))
+            for point in focus_points:
+                check_cancel(event)
+                distance = (gx[cx]+turbine['x']-point['x'])**2+(gy[cy]+turbine['y']-point['y'])**2
+                local = candidates[distance <= (float(detail_radius)*1.35)**2]
+                order = np.argsort(distance[distance <= (float(detail_radius)*1.35)**2], kind='stable')
+                selected.extend(local[order[:tree_limit]].tolist())
+            indices = np.unique(selected)
+            if len(indices) > 30000:
+                indices = indices[np.linspace(0, len(indices)-1, 30000, dtype=int)]
+        else:
+            indices = candidates[np.linspace(0, len(candidates)-1, min(tree_limit, len(candidates)), dtype=int)] if candidates.size else []
         for index in indices:
             r, c = divmod(int(index), len(xs))
-            trees.append(dict(x=float(gx[c]), y=float(gy[r]), ground=float(ground[ys[r], xs[c]]),
-                              height=float(heights[r, c]), source='forest_sample'))
-        summaries.append(dict(role='korony_lasu', features=len(trees), skipped=0, truncated=len(candidates) > tree_limit,
+            # Deterministic irregular placement, snapped back to real valid source cells.
+            row, col = int(ys[r]), int(xs[c])
+            if focused:
+                jitter = ((row*73856093) ^ (col*19349663)) & 0xffff
+                jr = min(grid.height-1, max(0, row+round(((jitter & 255)/255-.5)*spacing*.7)))
+                jc = min(grid.width-1, max(0, col+round(((jitter >> 8)/255-.5)*spacing*.7)))
+                if native_forest[jr, jc] and ground_valid[jr, jc] and surface_valid[jr, jc] and 2 <= surface[jr, jc]-ground[jr, jc] <= 80:
+                    row, col = jr, jc
+            trees.append(dict(x=float(grid.xmin+(col+.5)*grid.step-turbine['x']),
+                              y=float(grid.ymax-(row+.5)*grid.step-turbine['y']), ground=float(ground[row, col]),
+                              height=float(surface[row, col]-ground[row, col]), source='forest_sample'))
+        summaries.append(dict(role='korony_lasu', features=len(trees), skipped=0, truncated=len(indices) < len(candidates),
                               method='ilustracyjne próbki wewnątrz lasów; wysokości NMPT−NMT; nie inwentaryzacja drzew'))
+    if extras is not None:
+        extras['native_forest'] = native_forest
+        if buildings:
+            native = gdal.GetDriverByName('MEM').Create('', grid.width, grid.height, 1, gdal.GDT_Byte)
+            native.SetGeoTransform((grid.xmin, grid.step, 0, grid.ymax, 0, -grid.step))
+            native.SetProjection(srs2180().ExportToWkt())
+            if gdal.RasterizeLayer(native, [1], building_layer, burn_values=[1], options=['ALL_TOUCHED=TRUE']) != 0:
+                raise ValueError('Nie można przygotować obrysów budynków')
+            extras['native_buildings'] = native.ReadAsArray()
+            extras['building_mask'] = extras['native_buildings'][np.ix_(rows, cols)].tolist()
+    building_vector = None
     return forest.tolist(), trees, buildings, summaries

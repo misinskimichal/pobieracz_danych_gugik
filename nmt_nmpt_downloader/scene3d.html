@@ -1,9 +1,10 @@
 <!doctype html><html lang="pl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Scena 3D — atlas widoczności</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#102b38;color:#e9f3f5;font:15px system-ui,sans-serif}header{padding:20px 28px;background:#153747}h1{font-size:25px;margin:0 0 8px}p{margin:5px 0;color:#b6d1da;line-height:1.5}.controls{display:flex;gap:14px 22px;flex-wrap:wrap;padding:15px 28px;align-items:center}label{display:flex;gap:8px;align-items:center}input[type=range]{width:105px;accent-color:#6dd6ad}a,button,select{color:#153747;background:#8de1ca;border:0;border-radius:6px;padding:8px 12px;text-decoration:none;cursor:pointer}canvas{display:block;width:100%;height:65vh;min-height:360px;touch-action:none;background:#dce9e9}aside{padding:16px 28px;line-height:1.65;color:#bfd6dd}.key{display:inline-block;width:160px;height:12px;background:linear-gradient(90deg,#21865a,#e4d45e,#d34747);margin:0 12px;vertical-align:middle}output{min-width:30px}#status{padding:8px 28px;color:#94ddcd}@media print{.controls{display:none}body,header{background:white;color:#153747}p,aside{color:#153747}canvas{height:65vh}}</style>
-<header><h1 id="title">Scena 3D</h1><p id="info"></p><p>Przeciągnij, aby obrócić. Kółko myszy powiększa. Gęsta siatka jest renderowana przez WebGL.</p></header>
+<header><h1 id="title">Scena 3D</h1><p id="info"></p><p>Wybierz przygotowane miejsce z listy. Przeciąganie rozgląda się, kółko zmienia kąt widzenia. Detal obejmuje otoczenie aktywnego punktu.</p></header>
 <div class="controls">
 <label>Widok <select id="camera"><option value="orbit">Przegląd modelu</option><option value="eye">Z poziomu oczu</option></select></label>
+<label>Miejsce <select id="viewpoint" style="max-width:290px"><option value="-1">Własne miejsce z mapki</option></select></label>
 <label><span id="bearing-label">Strona</span> <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
 <label>Nachylenie <input id="tilt" type="range" min="8" max="80" value="28"><output id="tval"></output></label>
 <label>Pion × <input id="vertical" type="range" min="1" max="5" step=".25" value="1"><output id="vval"></output></label>
@@ -34,7 +35,7 @@
 <div id="status" role="status">Przygotowanie siatki…</div>
 <canvas id="view" tabindex="0" aria-label="Szczegółowa scena 3D terenu i turbiny"></canvas>
 <aside><span id="low"></span><span class="key"></span><span id="high"></span><br>
-Ortofotomapa ma osobny przełącznik; paleta kolorów jej nie wyłącza. Zielony las pochodzi z wybranej warstwy lasów. Symbole drzew mają wysokość z NMPT−NMT; korony z poligonów lasu są ilustracyjnymi próbkami, nie inwentaryzacją pojedynczych drzew. Budynki wymagają warstwy obrysów budynków, z której tworzymy uproszczone bryły z płaskim dachem o wysokości odczytanej z NMPT. Ściany nie mają zdjęć elewacji. Pokrycie, symbole i bryły służą prezentacji, nie zmieniają obliczonej widoczności.<br>
+Ortofotomapa ma osobny przełącznik; paleta jej nie wyłącza. Korony mają wysokości z NMPT−NMT, ale ich rozkład i wygląd są ilustracyjne. Bliski las jest gęstszy, dalszy zachowuje tło NMPT. Elewacje, okna, listowie, poszycie i miękkie cienie pod koronami są materiałami poglądowymi. Dachy korzystają ze szczegółowej ortofotomapy; spadek dopasowujemy tylko wtedy, gdy potwierdzają go próbki NMPT, w pozostałych przypadkach dach jest uproszczony. Nie odtwarzamy fotograficznych elewacji ze zdjęcia z góry. Materiały i detale nie zmieniają obliczonej widoczności.<br>
 To powierzchnia 2,5D oglądana w 3D. Podgląd może mieć rzadszą siatkę niż analiza — oba kroki pokazano w nagłówku. Braki są otworami. Pion ×1 zachowuje proporcje metrów. Oświetlenie nie jest analizą cieni słonecznych. Linie widzenia są nakładką; przy włączonej nakładce nie znikają za siatką. Kamera porusza się niezależnie od obserwatora przekroju. Krzywizna jest uwzględniana w analizie i profilu zgodnie z opcją; scena jest lokalna i płaska. Las w NMPT to pełna powierzchnia bez modelu prześwitów i sezonowości.</aside>
 <script>
 'use strict';
@@ -42,5 +43,6 @@ const scene=/*SCENE_DATA*/;
 const textureData=/*SCENE_TEXTURE*/null;
 const textureTiles=/*SCENE_TEXTURE_TILES*/[];
 const textureTileIssues=/*SCENE_TEXTURE_ISSUES*/[];
+/*SCENE_APPEARANCE*/
 /*SCENE_RENDERER*/
 </script></html>

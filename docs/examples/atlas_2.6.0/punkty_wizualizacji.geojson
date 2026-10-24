@@ -1,0 +1,40 @@
+{
+  "type": "FeatureCollection",
+  "name": "Punkty wizualizacji 3D",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "EPSG:2180"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "nazwa": "Droga - otwarty widok",
+        "oko_m": 1.7
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          500300.0,
+          500480.0
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "nazwa": "Skraj lasu",
+        "oko_m": 1.7
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          500480.0,
+          500280.0
+        ]
+      }
+    }
+  ]
+}

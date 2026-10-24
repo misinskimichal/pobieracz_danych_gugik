@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.5.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.6.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -19,6 +19,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Wydanie 2.4.0:** niezależny przełącznik ortofotomapy, bryły budynków z obrysów i wysokości NMPT, ilustracyjne korony z lasów oraz wariant „NMT + obiekty BDOT” — [instrukcja 2.4.0](Instrukcja_ATLAS_2.4.0.md).
 
 **Wydanie 2.5.0:** WMS/WMTS do szczegółowych lokalnych kafli i mozaiki QGIS, filtrowanie obrazu z poziomu oczu, widoczne korony zamiast powierzchni lasu i test w prawdziwym Chromium — [instrukcja 2.5.0](Instrukcja_ATLAS_2.5.0.md).
+
+**Wydanie 2.6.0:** zbieranie punktów kliknięciami w QGIS, lokalny detal i przełączanie miejsc, gęstsze bliskie listowie, poglądowe materiały elewacji i dopasowanie dachów do NMPT — [instrukcja 2.6.0](Instrukcja_ATLAS_2.6.0.md).
 
 ## Spis treści
 
@@ -1765,3 +1767,14 @@ Renderer odtwarza transformację UV dla każdego bloku, jawnie wiąże teksturę
 W lasach z przygotowanymi koronami wariant prezentacji domyślnie rysuje grunt NMT i korony zamiast zakrywającej je powierzchni NMPT. Włączenie pełnego NMPT nadal służy porównaniu; dane wysokościowe nie są modyfikowane. Otwory NoData są zachowane. Gęstość ilustracyjnych koron ma limit 2000/5000/10000, a ich umowny rozkład nie opisuje prześwitów i nie zmienia analizy widoczności.
 
 Przejrzano wskazany fork Qgis2threejs, szczególnie eksport obrazów, materiały bloków DEM oraz filtrowanie tekstur. Wykorzystano te wzorce we własnym rendererze; wtyczka pozostaje samodzielna. Weryfikacja obejmuje 83 testy Python/QGIS, test wybranego WMS z awarią jednego kafla, rzeczywiste pobranie kafla GUGiK oraz pełny test obrazu w Chromium/WebGL. Szczegóły i źródła zawiera [instrukcja 2.5.0](Instrukcja_ATLAS_2.5.0.md).
+
+
+## Suplement N — wdrożone w 2.6.0: wizualizacje dla wybranych punktów
+
+Klikanie w mapie QGIS zasila tabelę i warstwę punktów wizualizacji, z transformacją do EPSG:2180. Do 12 miejsc zapisuje `scene_view_options.scene_viewpoints` i `punkty_wizualizacji.geojson`. Dla punktów przygotowujemy lokalny fragment istniejącego modelu, bez ponownego wykonywania widoczności i bez dodawania nieistniejącej informacji wysokościowej. Tło w trybie punktowym jest lżejsze; detal aktywnego punktu i jego zdjęcie są przełączane w jednym HTML. Błędy pojedynczego punktu są raportowane, a pozostałe miejsca pozostają dostępne.
+
+`scene_views.py` ogranicza lokalną siatkę do 513×513 i dopasowuje jej brzegi do siatki tła. `scene_context.py` przeznacza budżet koron na najbliższe otoczenie punktów, zamiast rozpraszać go po całym kole. Dalszy las zachowuje powierzchnię NMPT, bliskie korony są nieregularnie rozmieszczonymi sylwetkami z proceduralnym listowiem. `scene_appearance.js` tworzy własne materiały bez dodatkowych obrazów sieciowych. Elewacje, okna, poszycie, listowie i cienie kontaktowe są poglądowe; nie stanowią inwentaryzacji ani analizy zacienienia.
+
+`scene_architecture.py` próbuje dopasować dach płaski, jednospadowy lub dwuspadowy do rzeczywistych próbek NMPT, odrzucając słabe dopasowania i pozostawiając wariant uproszczony. Dach jest teksturowany z najbliższych dokładnych obrazów, a elewacje uzyskują czytelny materiał bez udawania fotograficznej rekonstrukcji ścian. Współrzędne UV są przeliczane w shaderze wierzchołków przed interpolacją, co ogranicza utratę precyzji przy szczegółowym zdjęciu i małym kącie patrzenia.
+
+Folder zachowuje mozaikę tła i osobne VRT lokalnych zdjęć. Przeglądarka zwalnia obrazy poprzedniego punktu i korzysta z obrazów aktywnego miejsca. Ilość wierzchołków, obrazów i koron ma jawne limity. Potwierdzono brak zmiany rastrów widoczności, działanie kliknięć w innym CRS, dopasowanie dachów na danych o znanej geometrii i przełączanie punktów w prawdziwym Chromium. Pełne ograniczenia oraz przykłady są w [instrukcji 2.6.0](Instrukcja_ATLAS_2.6.0.md).

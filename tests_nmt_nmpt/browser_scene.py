@@ -71,6 +71,13 @@ def main():
 
         call('Runtime.enable')
         call('Page.enable')
+        trace = """window.__glFailures=[];
+        for(const name of ['drawArrays','drawElements','uniform1f','uniform1i','uniform2fv','uniform3fv','uniform4fv','uniformMatrix4fv','vertexAttribPointer','texImage2D','generateMipmap']){
+          const original=WebGLRenderingContext.prototype[name];
+          WebGLRenderingContext.prototype[name]=function(...args){const result=original.apply(this,args),error=this.getError();if(error)window.__glFailures.push({name,error,stack:new Error().stack});return result};
+        }"""
+        if os.environ.get('SCENE_TRACE_GL'):
+            call('Page.addScriptToEvaluateOnNewDocument', dict(source=trace))
         call('Emulation.setDeviceMetricsOverride', dict(width=1600, height=1100, deviceScaleFactor=1, mobile=False))
         nav = call('Page.navigate', dict(url=f'http://127.0.0.1:{server.server_port}/scene'))
         assert not nav.get('errorText'), nav
@@ -89,18 +96,43 @@ def main():
             path = output/(name+'.png')
             path.write_bytes(base64.b64decode(data.split(',', 1)[1]))
             return np.asarray(Image.open(path).convert('RGB')).astype(np.int16)
+
+        def wait_images():
+            deadline = time.monotonic()+40
+            while True:
+                current = evaluate('document.getElementById("view").sceneDiagnostics()')
+                if current['tiles_loaded'] == current['tiles_expected'] and current['tiles_completed'] == current['tiles_expected']:
+                    assert not current['tile_errors'] and not current['gl_error'], current
+                    return current
+                assert time.monotonic() < deadline, current
+                time.sleep(.1)
         photo = frame('eye_photo')
         colors = frame('eye_colors', 'document.getElementById("photo").checked=false;document.getElementById("photo").dispatchEvent(new Event("input"))')
         changed = np.count_nonzero(np.max(np.abs(photo-colors), axis=2) > 10)
         assert changed > 10000, changed
         frame('eye_photo_restored', 'document.getElementById("show-photo").click()')
+        switches = []
+        valid_views = evaluate('(scene.detail_views||[]).map((v,i)=>v.error?-1:i).filter(i=>i>=0)')
+        if len(valid_views) > 1:
+            target = valid_views[1]
+            evaluate(f'document.getElementById("viewpoint").value={target};document.getElementById("viewpoint").dispatchEvent(new Event("change"))')
+            switched = wait_images()
+            assert switched['active_view'] == target
+            assert switched['tiles_loaded'] < switched['export_tiles_expected'], switched
+            frame('viewpoint_2')
+            switches.append(switched)
+            evaluate(f'document.getElementById("viewpoint").value={valid_views[0]};document.getElementById("viewpoint").dispatchEvent(new Event("change"))')
+            switches.append(wait_images())
         assert evaluate('document.getElementById("view").sceneDiagnostics().forest_presentation')
         continuous = frame('continuous_nmpt', 'document.getElementById("forest-objects").checked=false;document.getElementById("forest-objects").dispatchEvent(new Event("input"))')
         assert np.count_nonzero(np.max(np.abs(photo-continuous), axis=2) > 10) > 1000
         frame('top_photo', 'document.getElementById("photo-top").click()')
         final = evaluate('document.getElementById("view").sceneDiagnostics()')
+        if os.environ.get('SCENE_TRACE_GL'):
+            failures = evaluate('window.__glFailures')
+            assert not failures, failures[:5]
         assert not errors and final['gl_error'] == 0, (errors, final)
-        (output/'result.json').write_text(json.dumps(dict(initial=state, final=final, changed_pixels=int(changed), exceptions=errors), indent=2))
+        (output/'result.json').write_text(json.dumps(dict(initial=state, final=final, changed_pixels=int(changed), exceptions=errors, view_switches=switches), indent=2))
         print('PASS: real Chromium/WebGL, local image tiles, eye-level photo pixel comparison, forest presentation and top view;', changed, 'changed pixels')
     finally:
         if connection:

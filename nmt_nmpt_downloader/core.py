@@ -13,7 +13,7 @@ from qgis.core import (
     QgsFeature, QgsGeometry, QgsRectangle, QgsSpatialIndex,
 )
 
-VERSION = '2.5.0'
+VERSION = '2.6.0'
 PLUGIN_NAME = 'NMT i NMTP ściągacz'
 STATUS_LABELS = {'downloaded': 'pobrane', 'reused': 'wcześniej pobrane', 'partial': 'częściowe braki',
                  'missing': 'brak danych', 'failed': 'błąd', 'canceled': 'anulowane',
