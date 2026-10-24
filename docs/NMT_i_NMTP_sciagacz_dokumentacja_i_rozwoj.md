@@ -1778,3 +1778,10 @@ Klikanie w mapie QGIS zasila tabelę i warstwę punktów wizualizacji, z transfo
 `scene_architecture.py` próbuje dopasować dach płaski, jednospadowy lub dwuspadowy do rzeczywistych próbek NMPT, odrzucając słabe dopasowania i pozostawiając wariant uproszczony. Dach jest teksturowany z najbliższych dokładnych obrazów, a elewacje uzyskują czytelny materiał bez udawania fotograficznej rekonstrukcji ścian. Współrzędne UV są przeliczane w shaderze wierzchołków przed interpolacją, co ogranicza utratę precyzji przy szczegółowym zdjęciu i małym kącie patrzenia.
 
 Folder zachowuje mozaikę tła i osobne VRT lokalnych zdjęć. Przeglądarka zwalnia obrazy poprzedniego punktu i korzysta z obrazów aktywnego miejsca. Ilość wierzchołków, obrazów i koron ma jawne limity. Potwierdzono brak zmiany rastrów widoczności, działanie kliknięć w innym CRS, dopasowanie dachów na danych o znanej geometrii i przełączanie punktów w prawdziwym Chromium. Pełne ograniczenia oraz przykłady są w [instrukcji 2.6.0](Instrukcja_ATLAS_2.6.0.md).
+
+
+## Suplement O — planowane: prawdziwe zdjęcia, panoramy i teksturowane modele
+
+Przejrzano wskazany projekt Aleph oraz źródła MapillaryClickPreview i eksperymentalnego forka Panoramax. Dla wybranych punktów największą poprawę wyglądu otoczenia może dać rzeczywiste zdjęcie z dopasowaną turbiną albo prawdziwy teksturowany model 3D. Panorama umożliwia rozglądanie się ze stanowiska aparatu; swobodne przemieszczanie wymaga modelu przestrzennego. Pokrycie konkretnego miejsca pozostaje do sprawdzenia.
+
+Osobna [analiza integracji](Panoramy_i_modele_3D_analiza_integracji.md) opisuje zweryfikowane funkcje, wymagania wersji i tokenów, zasady dostępu do danych Aleph/Google, georeferencję GLB oraz etapowy plan: sprawdzenie zdjęć przy punktach, kalibracja kamery i fotomontaż, następnie opcjonalny import modelu. Zawiera propozycje bibliotek i przykład odczytu metadanych. To kierunek rozwoju, **nie funkcja wdrożona w pakiecie 2.6.0**; rastry analizy i pakiet instalacyjny pozostają bez zmian.
