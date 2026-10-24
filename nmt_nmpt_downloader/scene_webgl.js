@@ -89,7 +89,11 @@ function startScene(s,textureUrl) {
   const uniforms=Object.fromEntries(['uMatrix','uVertical','uSun','uTexture','uUseTexture'].map(n=>[n,gl.getUniformLocation(program,n)]));
   let zoom=1,drag=null,pending=false,dirty=true,batches=[],objects=[],rays=[],low=0,high=1,textureReady=false,textureImage=null,observerPoint=null;
   const locator=$('locator'),locatorCtx=locator.getContext('2d');
-  $('texture-status').textContent=textureUrl?'Wczytywanie ortofotomapy…':'Brak osadzonej ortofotomapy. W QGIS wybierz jej źródło i kliknij Odśwież samą scenę 3D.';
+  let textureSize='';
+  function photoState(){
+    $('texture-status').textContent=textureReady?`Ortofotomapa ${textureSize}: ${$('photo').checked?'NAŁOŻONA NA MODEL 3D':'WYŁĄCZONA NA MODELU — kliknij Pokaż ortofotomapę'}. Mapka wyboru miejsca ma własny podgląd zdjęcia.`:(textureUrl?'Wczytywanie ortofotomapy…':'Brak osadzonej ortofotomapy. W QGIS wybierz jej źródło i kliknij Odśwież samą scenę 3D.');
+  }
+  photoState();
   const texture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,texture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([255,255,255,255]));
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
@@ -104,9 +108,9 @@ function startScene(s,textureUrl) {
       if(width>maximum||height>maximum){const factor=Math.min(maximum/width,maximum/height),resized=document.createElement('canvas');resized.width=Math.max(1,Math.floor(width*factor));resized.height=Math.max(1,Math.floor(height*factor));resized.getContext('2d').drawImage(image,0,0,resized.width,resized.height);input=resized}
       gl.bindTexture(gl.TEXTURE_2D,texture);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,input);
       const error=gl.getError();if(error!==gl.NO_ERROR)throw Error(`błąd karty graficznej ${error}`);
-      textureReady=true;$('texture-option').disabled=false;dirty=dirty||$('material').value==='cover';$('material').value='texture';
-      $('texture-status').textContent=`Ortofotomapa ${width||'?'} × ${height||'?'} wczytana. Kliknij na mapce, aby wybrać miejsce patrzenia.`;schedule();
-    }catch(error){textureReady=false;$('texture-option').disabled=true;$('texture-status').textContent='Zdjęcie jest w HTML i na mapce, ale nie udało się nałożyć go w 3D: '+error.message+'. Możesz pobrać PNG przyciskiem powyżej.';schedule()}
+      textureReady=true;textureSize=`${width||'?'} × ${height||'?'}`;$('photo').disabled=false;$('show-photo').disabled=false;$('photo').checked=true;
+      photoState();schedule();
+    }catch(error){textureReady=false;$('photo').disabled=true;$('show-photo').disabled=true;$('texture-status').textContent='Zdjęcie jest w HTML i na mapce, ale nie udało się nałożyć go w 3D: '+error.message+'. Możesz pobrać PNG przyciskiem powyżej.';schedule()}
   };image.onerror=()=>{$('texture-status').textContent='Nie można odczytać osadzonej ortofotomapy. Odśwież scenę w QGIS i sprawdź źródło.'};image.src=textureUrl}
   function drawLocator(){
     if(!locatorCtx)return;
@@ -119,7 +123,7 @@ function startScene(s,textureUrl) {
     if(observerPoint){const p=pixel(...observerPoint),angle=+$('bearing').value*Math.PI/180;locatorCtx.fillStyle='#1987d6';locatorCtx.beginPath();locatorCtx.arc(p[0],p[1],5,0,Math.PI*2);locatorCtx.fill();locatorCtx.strokeStyle='#1987d6';locatorCtx.lineWidth=2;locatorCtx.beginPath();locatorCtx.moveTo(p[0],p[1]);locatorCtx.lineTo(p[0]+Math.sin(angle)*18,p[1]-Math.cos(angle)*18);locatorCtx.stroke()}
   }
   function setObserver(point,aim=true){
-    const pose=eyePose(s,0,point,+$('eye-height').value,0,0,$('cover').checked);
+    const pose=eyePose(s,0,point,+$('eye-height').value,0,0,occupiedSurface());
     if(pose.error){$('eye-status').textContent=pose.error;return false}
     observerPoint=point.slice();
     if(aim){const distance=Math.hypot(...point),target=s.ground_z===null?pose.eyeZ:s.ground_z+s.hub;
@@ -148,8 +152,13 @@ function startScene(s,textureUrl) {
   function upload(mesh,mode=gl.TRIANGLES){const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,mesh.vertices,gl.STATIC_DRAW);let index=null;if(mesh.indices){index=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,index);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,mesh.indices,gl.STATIC_DRAW)}return {buffer,index,count:mesh.indices?mesh.indices.length:mesh.vertices.length/12,mode}}
   function dispose(list){for(const b of list){gl.deleteBuffer(b.buffer);if(b.index)gl.deleteBuffer(b.index)}}
   function world(p){return [p[0]/s.radius,p[1]/s.radius,(p[2]-low)/s.radius]}
-  function triangle(out,a,b,c,color){const normal=normalize(cross(b.map((v,k)=>v-a[k]),c.map((v,k)=>v-a[k])));for(const p of [a,b,c])out.push(...world(p),...normal,...color,0,0,0)}
+  function triangle(out,a,b,c,color,textured=false){const normal=normalize(cross(b.map((v,k)=>v-a[k]),c.map((v,k)=>v-a[k]))),bounds=s.texture_bounds||[s.x[0],s.y[s.y.length-1],s.x[s.x.length-1],s.y[0]];for(const p of [a,b,c])out.push(...world(p),...normal,...color,textured?(p[0]-bounds[0])/(bounds[2]-bounds[0]):0,textured?(p[1]-bounds[1])/(bounds[3]-bounds[1]):0,textured?1:0)}
   function cylinder(out,x,y,z,height,radius,color,cone=false){for(let k=0;k<12;k++){const a=k*Math.PI/6,b=(k+1)*Math.PI/6,p=[x+radius*Math.cos(a),y+radius*Math.sin(a),z],q=[x+radius*Math.cos(b),y+radius*Math.sin(b),z];if(cone)triangle(out,p,q,[x,y,z+height],color);else{const r=[q[0],q[1],z+height],t=[p[0],p[1],z+height];triangle(out,p,q,r,color);triangle(out,p,r,t,color)}}}
+  function crown(out,tree){const radius=Math.min(8,Math.max(1,tree.height*.2));
+    function point(lat,lon){return [tree.x+radius*Math.cos(lat)*Math.cos(lon),tree.y+radius*Math.cos(lat)*Math.sin(lon),tree.ground+tree.height*(.65+.35*Math.sin(lat))]}
+    for(let r=0;r<4;r++)for(let c=0;c<8;c++){const a=-Math.PI/2+r*Math.PI/4,b=a+Math.PI/4,l=c*Math.PI/4,h=l+Math.PI/4,color=[.12+r*.012,.30+r*.018,.16];if(r>0)triangle(out,point(a,l),point(a,h),point(b,l),color);if(r<3)triangle(out,point(a,h),point(b,h),point(b,l),color)}
+  }
+  function occupiedSurface(){return !!($('cover').checked||($('trees').checked&&(s.trees||[]).length)||($('buildings').checked&&(s.buildings||[]).length))}
   function rebuild(){
     dispose(batches);dispose(objects);dispose(rays);batches=[];objects=[];rays=[];
     const heights=$('cover').checked?s.surface:s.ground;
@@ -160,10 +169,17 @@ function startScene(s,textureUrl) {
     const construction=[];
     if(s.ground_z!==null){cylinder(construction,0,0,s.ground_z,s.hub,Math.max(.7,s.hub*.018),[.94,.96,.97]);const z=s.ground_z+s.hub;
       for(let k=0;k<3;k++){const a=(k*120+20)*Math.PI/180,r=s.diameter/2,w=s.diameter*.018;triangle(construction,[-w,0,z],[w,0,z],[r*Math.sin(a),0,z+r*Math.cos(a)],[.98,.98,.98])}}
-    if($('trees').checked&&$('cover').checked)for(const tree of s.trees||[]){cylinder(construction,tree.x,tree.y,tree.ground,tree.height*.4,.3,[.34,.23,.15]);cylinder(construction,tree.x,tree.y,tree.ground+tree.height*.3,tree.height*.7,Math.min(8,Math.max(1,tree.height*.2)),[.12,.35,.19],true)}
+    if($('trees').checked)for(const tree of s.trees||[]){cylinder(construction,tree.x,tree.y,tree.ground,tree.height*.45,.3,[.34,.23,.15]);crown(construction,tree)}
+    if($('buildings').checked)for(const building of s.buildings||[]){
+      const z=building.roof+.05;
+      for(const ring of building.rings)for(let i=0;i<ring.length-1;i++){const a=ring[i],b=ring[i+1],p=[...a,building.ground],q=[...b,building.ground],r=[...b,z],t=[...a,z];triangle(construction,p,q,r,[.78,.77,.72]);triangle(construction,p,r,t,[.78,.77,.72])}
+      for(const face of building.roof_triangles)triangle(construction,[...face[0],z],[...face[1],z],[...face[2],z],[.62,.31,.24],true);
+    }
     if(construction.length)objects.push(upload({vertices:new Float32Array(construction)}));
     if(s.eye!==null&&s.ground_z!==null){const lines=[];for(const [delta,color] of [[s.diameter/2,[.58,.38,.82]],[0,[.94,.25,.4]],[-s.diameter/2,[.8,.58,.12]]])for(let i=0;i<100;i+=2)for(const t of [i/100,(i+1)/100]){const p=[s.observer[0]*(1-t),s.observer[1]*(1-t),s.eye+(s.ground_z+s.hub+delta-s.eye)*t];lines.push(...world(p),0,0,1,...color,0,0,0)}rays.push(upload({vertices:new Float32Array(lines)},gl.LINES))}
-    $('status').textContent=`Gotowe · ${batches.reduce((n,b)=>n+b.count/3,0).toLocaleString('pl-PL')} trójkątów terenu · ${(s.trees||[]).length} symboli drzew · braki pozostają otworami`;
+    const treeCount=$('trees').checked?(s.trees||[]).length:0,buildingCount=$('buildings').checked?(s.buildings||[]).length:0;
+    $('status').textContent=`Gotowe · ${batches.reduce((n,b)=>n+b.count/3,0).toLocaleString('pl-PL')} trójkątów terenu · ${treeCount} symboli drzew · ${buildingCount} brył budynków · braki pozostają otworami`;
+    $('context-status').textContent=(s.context_notes||[]).join(' ')+' '+(s.resource!=='NMPT'?'To scena NMT — korony i dachy obejrzysz w scenie NMPT. ':(!(s.trees||[]).length?'Brak dodatkowych symboli drzew: wskaż w QGIS warstwę lasów lub punktów drzew. ':'')+(!(s.buildings||[]).length?'Brak dodatkowych brył budynków: wskaż warstwę obrysów budynków. ':''))+'NMPT samo pokazuje korony i dachy jako powierzchnię; nie rozpoznaje obiektów. '+(!$('cover').checked&&(treeCount||buildingCount)?'WIDOK OBIEKTÓW NA NMT: przerwy między symbolami nie są wynikiem widoczności. ':'')+'Symbole i bryły są uproszczonym podglądem.';
   }
   function bind(batch){gl.bindBuffer(gl.ARRAY_BUFFER,batch.buffer);for(const a of attributes){gl.enableVertexAttribArray(a.location);gl.vertexAttribPointer(a.location,a.size,gl.FLOAT,false,48,a.offset)}if(batch.index){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,batch.index);gl.drawElements(batch.mode,batch.count,gl.UNSIGNED_SHORT,0)}else gl.drawArrays(batch.mode,0,batch.count)}
   function draw(){pending=false;try{
@@ -173,16 +189,19 @@ function startScene(s,textureUrl) {
     const bearing=+$('bearing').value,tilt=+$('tilt').value,vertical=+$('vertical').value,angle=bearing*Math.PI/180,elevation=tilt*Math.PI/180;
     $('bval').textContent=`${Math.round(bearing)}°`;$('tval').textContent=`${tilt}°`;$('vval').textContent=vertical;$('fval').textContent=`${$('fov').value}°`;
     const distance=2.8/zoom*Math.max(1,h/w);let target=[0,0,(high-low)/s.radius*vertical*.4],eye=[Math.sin(angle)*Math.cos(elevation)*distance,Math.cos(angle)*Math.cos(elevation)*distance,target[2]+Math.sin(elevation)*distance],near=.005,far=100;
-    if($('camera').value==='eye'&&observerPoint){const pose=eyePose(s,low,observerPoint,+$('eye-height').value,bearing,tilt,$('cover').checked);
+    if($('camera').value==='eye'&&observerPoint){const pose=eyePose(s,low,observerPoint,+$('eye-height').value,bearing,tilt,occupiedSurface());
       if(pose.error){$('eye-status').textContent=pose.error;return}eye=pose.eye;target=pose.target;near=.1/s.radius;far=4+(high-low+s.hub+s.diameter)/s.radius;
       const origin=s.origin||[0,0];$('eye-status').textContent=`X=${(origin[0]+observerPoint[0]).toFixed(2)}, Y=${(origin[1]+observerPoint[1]).toFixed(2)} · grunt NMT ${pose.ground.toFixed(2)} m + oko ${$('eye-height').value} m = ${pose.eyeZ.toFixed(2)} m · ${s.height_system||''}`;}
     gl.uniformMatrix4fv(uniforms.uMatrix,false,multiply(projection(+$('fov').value,w/h,distance,$('projection').value==='ortho',near,far),lookAt(eye,target)));gl.uniform1f(uniforms.uVertical,vertical);
-    const sun=+$('sun').value*Math.PI/180;gl.uniform3fv(uniforms.uSun,new Float32Array([Math.sin(sun)*.707,Math.cos(sun)*.707,.707]));gl.uniform1i(uniforms.uTexture,0);gl.uniform1f(uniforms.uUseTexture,textureReady&&$('material').value==='texture'?1:0);
+    const sun=+$('sun').value*Math.PI/180;gl.uniform3fv(uniforms.uSun,new Float32Array([Math.sin(sun)*.707,Math.cos(sun)*.707,.707]));gl.uniform1i(uniforms.uTexture,0);gl.uniform1f(uniforms.uUseTexture,textureReady&&$('photo').checked?1:0);
     gl.clearColor(.83,.9,.91,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1,1);for(const b of batches)bind(b);gl.disable(gl.POLYGON_OFFSET_FILL);for(const b of objects)bind(b);
     if($('lines').checked){gl.disable(gl.DEPTH_TEST);for(const b of rays)bind(b);gl.enable(gl.DEPTH_TEST)}drawLocator();
   }catch(error){$('status').textContent='Problem renderowania: '+error.message+'. Użyj lekkiego podglądu.'}}
   function schedule(){if(!pending){pending=true;requestAnimationFrame(draw)}}
-  for(const id of ['bearing','tilt','vertical','sun','projection','fov','material','cover','trees','lines'])$(id).addEventListener('input',()=>{if(['material','cover','trees'].includes(id))dirty=true;schedule()});
+  $('photo').addEventListener('input',()=>{photoState();schedule()});$('show-photo').onclick=()=>{$('photo').checked=true;photoState();schedule()};
+  $('object-view').disabled=!(s.trees||[]).length&&!(s.buildings||[]).length;
+  $('object-view').onclick=()=>{$('cover').checked=false;$('trees').checked=true;$('buildings').checked=true;dirty=true;schedule()};
+  for(const id of ['bearing','tilt','vertical','sun','projection','fov','material','cover','trees','buildings','lines'])$(id).addEventListener('input',()=>{if(['material','cover','trees','buildings'].includes(id))dirty=true;schedule()});
   $('reset').onclick=()=>{$('camera').value='orbit';cameraMode();$('bearing').value=s.azimuth;$('tilt').value=28;$('vertical').value=1;$('fov').value=45;$('projection').value='perspective';zoom=1;schedule()};
   $('save').onclick=()=>{draw();const a=document.createElement('a');a.download=`scena_3d_${s.resource}.png`;a.href=canvas.toDataURL('image/png');a.click()};
   canvas.onpointerdown=e=>{canvas.focus?.();drag={x:e.clientX,y:e.clientY,b:+$('bearing').value,t:+$('tilt').value};canvas.setPointerCapture(e.pointerId)};

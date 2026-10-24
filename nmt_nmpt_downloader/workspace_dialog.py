@@ -252,7 +252,8 @@ class WorkspaceDialog(QDialog):
         detail_form.addRow(self.scene_point_label)
         self.scene_layers = {}
         for role, title, filters in [('lasy', 'Lasy / zadrzewienia (opcjonalnie BDOT):', QgsMapLayerProxyModel.PolygonLayer),
-                                     ('drzewa', 'Drzewa — punkty (opcjonalnie BDOT):', QgsMapLayerProxyModel.PointLayer)]:
+                                     ('drzewa', 'Drzewa — punkty (opcjonalnie BDOT):', QgsMapLayerProxyModel.PointLayer),
+                                     ('budynki_3d', 'Obrysy budynków do brył 3D (nie działki):', QgsMapLayerProxyModel.PolygonLayer)]:
             combo = QgsMapLayerComboBox()
             combo.setFilters(filters)
             combo.setAllowEmptyLayer(True)
@@ -553,6 +554,7 @@ class WorkspaceDialog(QDialog):
         return dict(view_turbine=self.view_turbine.value(), view_azimuth=self.view_azimuth.value(),
                     scene_vertices=self.scene_quality.currentData(), scene_radius=self.scene_radius.value(),
                     scene_eye=self.eye.value(), scene_start_eye=self.scene_start_eye.isChecked(), scene_observer=self.scene_observer,
+                    scene_context_layer_ids={role: combo.currentLayer().id() for role, combo in self.scene_layers.items() if combo.currentLayer()},
                     scene_texture=self.scene_texture.isChecked(), scene_texture_mode=self.texture_mode.currentData(),
                     scene_texture_layer_id=self.texture_layer.currentLayer().id() if self.texture_layer.currentLayer() else '')
 
@@ -957,7 +959,8 @@ class WorkspaceDialog(QDialog):
                                   ('scene_texture', self.scene_texture)]:
                 checkbox.setChecked(bool((view if key == 'scene_texture' else opts).get(key, key != 'scene_texture')))
             for key, combo in dict(self.context_layers, **self.scene_layers).items():
-                combo.setLayer(QgsProject.instance().mapLayer(opts.get('context_layer_ids', {}).get(key, '')))
+                layer_id = view.get('scene_context_layer_ids', {}).get(key, opts.get('context_layer_ids', {}).get(key, ''))
+                combo.setLayer(QgsProject.instance().mapLayer(layer_id))
             self.auto_download.setChecked(False)
             self.report_folder.edit.setText(str(path.parent.parent))
             report['report_dir'] = str(path.parent)

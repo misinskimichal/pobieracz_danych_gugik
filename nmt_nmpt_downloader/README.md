@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.3.1
+# NMT i NMTP ściągacz — Atlas widoczności 2.4.0
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.3.1.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.4.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -76,6 +76,16 @@ Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_N
 
 [Dokładna instrukcja i omówienie inspiracji z PDF](../docs/Instrukcja_ATLAS_2.2.0.md). Nowe pliki wyniku: `raport.gpkg`, `scena_3d_lekka_*.html` i opcjonalnie `tekstura_*.png`. Szczegółowa scena zawiera obraz w sobie. Modeli, cache i raportów użytkownika nie ma w ZIP-ie instalacyjnym.
 
+
+## Wydanie 2.4.0 — zdjęcie niezależne od palety, budynki i lasy
+
+**Ortofotomapa na modelu** jest osobnym przełącznikiem w HTML. Zmiana palety wysokości/pokrycia jej nie wyłącza. Komunikat odróżnia zdjęcie nałożone na model od samego podglądu na mapce. Przycisk **Pokaż ortofotomapę** przywraca nakładanie jednym kliknięciem.
+
+W QGIS wybierz opcjonalnie obrysy budynków, lasy i punkty drzew. Budynki stają się uproszczonymi bryłami z płaskim dachem na wysokości maksimum NMPT w obrysie, z teksturą zdjęcia na dachu. Ściany mają neutralny kolor. Wysokości drzew pochodzą z NMPT−NMT; bez punktów drzew warstwa lasów daje ilustracyjne próbki koron wewnątrz poligonów, nie inwentaryzację pojedynczych drzew. Brak takich danych jest opisany w HTML. Warstwa działek nie jest źródłem obrysów budynków.
+
+**NMT + obiekty BDOT** pokazuje bryły i korony nad samym gruntem, aby nie chowały się wewnątrz ciągłej powierzchni NMPT. To wariant prezentacji; przerwy między symbolami nie oznaczają prześwitów ani potwierdzonej widoczności. Włącz **Powierzchnia NMPT**, aby wrócić do modelu powierzchni. Wybór miejsca kamery przy widocznych obiektach nadal sprawdza oryginalną powierzchnię NMPT. Żaden z tych przełączników nie przelicza analizy. Aktualizacja istniejącego wyniku wymaga **Odśwież samą scenę 3D / ortofotomapę** lub **Scena 3D** po zmianie ustawień/wersji.
+
+[Instrukcja 2.4.0](../docs/Instrukcja_ATLAS_2.4.0.md) opisuje konfigurację, ograniczenia i weryfikację.
 
 ## Wydanie 2.3.1 — aktualny HTML po wyborze zdjęcia
 

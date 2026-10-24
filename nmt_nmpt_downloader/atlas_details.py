@@ -209,14 +209,17 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
         return [[round(float(v), 2) if ok and np.isfinite(v) else None for v, ok in zip(line, mask)] for line, mask in zip(array, good)]
 
     from .scene_context import scene_context
-    forest, trees, context_summary = scene_context(scene_contexts or {}, transform_context, grid, turbine, radius, rows, cols,
-                                                   ground, ground_valid, surface, surface_valid, event)
+    forest, trees, buildings, context_summary = scene_context(scene_contexts or {}, transform_context, grid, turbine, radius, rows, cols,
+                                                              ground, ground_valid, surface, surface_valid, event)
+    labels = dict(lasy='Lasy', drzewa='Punkty drzew', budynki_3d='Budynki', korony_lasu='Ilustracyjne korony lasu')
     payload = dict(version=VERSION, resource=spec['resource'], turbine=str(turbine['id']), radius=radius, demo=bool(options.get('demo')),
                    origin=[turbine['x'], turbine['y']], height_system=spec.get('height', ''),
                    camera_observer=[float(camera[0])-turbine['x'], float(camera[1])-turbine['y']] if camera else None,
                    eye_height=float(options.get('scene_eye', options['eye'])), start_eye=bool(options.get('scene_start_eye', False)),
                    camera_warning=camera_warning,
-                   profile_radius=spec['radius'], forest=forest, trees=trees, context_summary=context_summary,
+                   profile_radius=spec['radius'], forest=forest, trees=trees, buildings=buildings, context_summary=context_summary,
+                   context_notes=[f'{labels.get(item["role"], item["role"])}: {item["features"]} obiektów, pominięto {item["skipped"]}.' +
+                                  (' Osiągnięto limit podglądu.' if item['truncated'] else '') for item in context_summary],
                    texture_bounds=[grid.xmin+x0*grid.step-turbine['x'], grid.ymax-y1*grid.step-turbine['y'],
                                    grid.xmin+x1*grid.step-turbine['x'], grid.ymax-y0*grid.step-turbine['y']],
                    step_m=grid.step * stride, analysis_step_m=grid.step, azimuth=data['azimuth'],

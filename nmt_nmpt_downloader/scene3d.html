@@ -10,22 +10,27 @@
 <label>Oświetlenie <input id="sun" type="range" min="0" max="360" value="300"></label>
 <label>Rzut <select id="projection"><option value="perspective">Perspektywiczny</option><option value="ortho">Równoległy</option></select></label>
 <label>Kąt widzenia <input id="fov" type="range" min="15" max="90" value="45"><output id="fval"></output></label>
-<label>Kolory <select id="material"><option value="height">Wysokość</option><option value="cover">Pokrycie / BDOT</option><option id="texture-option" value="texture" disabled>Tekstura mapy</option></select></label>
+<label><input id="photo" type="checkbox" disabled>Ortofotomapa na modelu</label>
+<button id="show-photo" disabled>Pokaż ortofotomapę</button>
+<label>Kolory pod zdjęciem <select id="material"><option value="height">Wysokość</option><option value="cover">Pokrycie / BDOT</option></select></label>
 <label><input id="cover" type="checkbox" checked>Powierzchnia NMPT</label>
 <label><input id="trees" type="checkbox" checked>Symbole drzew</label>
+<label><input id="buildings" type="checkbox" checked>Bryły budynków</label>
+<button id="object-view" disabled title="Podgląd uproszczonych obiektów na gruncie; nie przelicza widoczności">NMT + obiekty BDOT</button>
 <label><input id="lines" type="checkbox" checked>Linie przekroju</label>
 <label>Oko nad NMT <input id="eye-height" type="number" min="0.3" max="100" step="0.1" value="1.7" style="width:75px"> m</label>
 <button id="look-turbine">Patrz na turbinę</button>
 <button id="reset">Przywróć kamerę</button><button id="save">Zapisz PNG</button><a id="profile">Przekrój</a><a id="fallback">Lekki podgląd bez WebGL</a>
 <a id="download-texture" style="display:none">Pobierz zdjęcie podkładu PNG</a>
 </div><div id="texture-status" role="status" style="padding:8px 28px;color:#ffd17d"></div>
+<div id="context-status" role="status" style="padding:0 28px 8px;color:#bfd6dd"></div>
 <div style="display:flex;gap:18px;align-items:center;padding:0 28px;flex-wrap:wrap">
 <canvas id="locator" width="320" height="320" style="width:260px;height:260px;min-height:0;cursor:crosshair" aria-label="Kliknij miejsce patrzenia na mapie"></canvas>
 <div style="max-width:650px"><b>Kliknij na mapce, skąd chcesz patrzeć.</b><p id="eye-status">Wysokość oka jest liczona ponad gruntem NMT. Czerwony punkt oznacza turbinę.</p><p>W widoku z oczu przeciąganie rozgląda się z tego samego miejsca. Strzałki / W A S D po kliknięciu sceny przesuwają obserwatora. Shift zwiększa krok. Kółko zmienia kąt widzenia. Pion jest ustawiony na 1:1.</p></div></div>
 <div id="status" role="status">Przygotowanie siatki…</div>
 <canvas id="view" tabindex="0" aria-label="Szczegółowa scena 3D terenu i turbiny"></canvas>
 <aside><span id="low"></span><span class="key"></span><span id="high"></span><br>
-Kolory wysokości opisują metry. W trybie pokrycia zielony las pochodzi z wybranej warstwy BDOT; nie dodajemy mu umownej wysokości. Symbole drzew mają wysokość z różnicy NMPT−NMT w ich położeniu; kształt korony jest ilustracyjny. Pokrycie i drzewa służą prezentacji, nie zmieniają obliczonej widoczności.<br>
+Ortofotomapa ma osobny przełącznik; paleta kolorów jej nie wyłącza. Zielony las pochodzi z wybranej warstwy lasów. Symbole drzew mają wysokość z NMPT−NMT; korony z poligonów lasu są ilustracyjnymi próbkami, nie inwentaryzacją pojedynczych drzew. Budynki wymagają warstwy obrysów budynków, z której tworzymy uproszczone bryły z płaskim dachem o wysokości odczytanej z NMPT. Ściany nie mają zdjęć elewacji. Pokrycie, symbole i bryły służą prezentacji, nie zmieniają obliczonej widoczności.<br>
 To powierzchnia 2,5D oglądana w 3D. Podgląd może mieć rzadszą siatkę niż analiza — oba kroki pokazano w nagłówku. Braki są otworami. Pion ×1 zachowuje proporcje metrów. Oświetlenie nie jest analizą cieni słonecznych. Linie widzenia są nakładką; przy włączonej nakładce nie znikają za siatką. Kamera porusza się niezależnie od obserwatora przekroju. Krzywizna jest uwzględniana w analizie i profilu zgodnie z opcją; scena jest lokalna i płaska. Las w NMPT to pełna powierzchnia bez modelu prześwitów i sezonowości.</aside>
 <script>
 'use strict';

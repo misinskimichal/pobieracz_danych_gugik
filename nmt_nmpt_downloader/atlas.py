@@ -378,8 +378,8 @@ class AtlasEngine:
     def __init__(self, source, crs, context, options, contexts=None, notify=lambda _: None, log=lambda _: None):
         self.source, self.crs, self.context = source, crs, context
         self.options, self.contexts = options, contexts or {}
-        self.scene_contexts = {key: value for key, value in self.contexts.items() if key in ('lasy', 'drzewa')}
-        self.contexts = {key: value for key, value in self.contexts.items() if key not in ('lasy', 'drzewa')}
+        self.scene_contexts = {key: value for key, value in self.contexts.items() if key in ('lasy', 'drzewa', 'budynki_3d')}
+        self.contexts = {key: value for key, value in self.contexts.items() if key not in ('lasy', 'drzewa', 'budynki_3d')}
         self.notify, self.log = notify, log
         self.cancel_event = threading.Event()
         self.started, self.report_dir = time.monotonic(), None

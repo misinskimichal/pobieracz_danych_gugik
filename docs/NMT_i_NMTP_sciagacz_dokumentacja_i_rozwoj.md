@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.3.1; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.4.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -15,6 +15,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Wydanie 2.3.0:** poprawiony wybór i oczekiwanie na ortofotomapę, kamera z poziomu oczu, wskazywanie miejsca w QGIS lub na mapce oraz odświeżanie samej sceny z zapisanych modeli — [instrukcja 2.3.0](Instrukcja_ATLAS_2.3.0.md).
 
 **Wydanie 2.3.1:** aktualizacja HTML przed otwarciem po zmianie zdjęcia, osobny podgląd PNG i diagnostyka tekstury WebGL — [instrukcja 2.3.1](Instrukcja_ATLAS_2.3.1.md).
+
+**Wydanie 2.4.0:** niezależny przełącznik ortofotomapy, bryły budynków z obrysów i wysokości NMPT, ilustracyjne korony z lasów oraz wariant „NMT + obiekty BDOT” — [instrukcja 2.4.0](Instrukcja_ATLAS_2.4.0.md).
 
 ## Spis treści
 
@@ -1739,3 +1741,14 @@ Kamerę ustawia kliknięcie mapki sceny albo punkt wskazany w QGIS. Wysokość j
 Po zmianie ustawień sceny przycisk **Scena 3D** odświeża zapisany HTML przed jego otwarciem. Wybór warstwy rastrowej wybiera tryb pojedynczej warstwy i włącza zdjęcie. Odczyt zapisanego raportu zachowuje wcześniejsze ustawienia. Osobny podgląd PNG pozwala sprawdzić eksport bez przeglądarki. Błąd eksportu jest zgłaszany przed automatycznym otwarciem, a gotowe wyniki analizy pozostają dostępne.
 
 W HTML obraz jest dostępny na mapce i do pobrania niezależnie od powodzenia jego przesłania do WebGL. Tekstura jest zmniejszana do limitu urządzenia, a błędy jej dekodowania i nakładania mają odrębne komunikaty. Nie oznacza to rozpoznania przyczyny każdego szarego tła u użytkownika; rozdziela etapy diagnostyki. Aktualizowanie ustawień nadal odbywa się w formularzu; akcje panelu warstw otwierają zapisane pliki. Zmiana kamery nie przelicza widoczności. Pełny opis i weryfikację zawiera [instrukcja 2.3.1](Instrukcja_ATLAS_2.3.1.md).
+
+
+## Suplement L — wdrożone w 2.4.0: niezależne zdjęcie i uproszczone obiekty
+
+W 2.3.1 paleta „Pokrycie / BDOT” wyłączała zdjęcie na siatce, mimo że komunikat nadal potwierdzał jego wczytanie. Oddzielny przełącznik zdjęcia i stan „NAŁOŻONA NA MODEL 3D” / „WYŁĄCZONA NA MODELU” usuwają tę niespójność. Paleta służy teraz do kolorowania miejsc bez zdjęcia.
+
+Warstwa obrysów budynków jest osobnym źródłem prezentacji, niezależnym od działek/ekspozycji zabudowy. PyQGIS `QgsTessellator` dzieli dach z zachowaniem wklęsłości i dziedzińców. Maksimum NMPT w obrysie ustala uproszczony płaski dach, minimum NMT podstawę; jest to bryła poglądowa, nie model rzeczywistej konstrukcji dachu. Braki, zbyt mały obrys, brak różnicy wysokości, niepoprawna geometria i obiekty przy granicy koła mogą spowodować pominięcie. Raport podaje liczbę pominięć i limity. Budynki nie mają fotograficznych elewacji.
+
+Warstwa lasów bez punktów drzew daje do 2000 ilustracyjnych koron, rozmieszczonych na regularnych próbkach wewnątrz rzeczywistych poligonów; wysokość każdej pochodzi z NMPT−NMT. Obecność punktów drzew wyłącza takie dodatkowe próbkowanie. Wariant „NMT + obiekty BDOT” pozwala oglądać korony i bryły bez przykrywającej je ciągłej powierzchni NMPT, z wyraźną informacją, że przerwy między symbolami nie są wynikiem analizy widoczności. Pozycja oka nadal sprawdza oryginalny model powierzchni, jeśli obiekty są widoczne.
+
+Opcje warstw sceny są zapisywane w `scene_view_options.scene_context_layer_ids` i odtwarzane przy wczytaniu raportu. Obliczone rastry pozostają bez zmian. Dokumentacja, ograniczenia, testy oraz syntetyczny przykład są w [instrukcji 2.4.0](Instrukcja_ATLAS_2.4.0.md).

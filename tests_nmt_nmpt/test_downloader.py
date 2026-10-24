@@ -1237,6 +1237,98 @@ class AtlasTests(unittest.TestCase):
             np.testing.assert_array_equal(gdal.Open(before['paths']['count']).ReadAsArray(), gdal.Open(after['paths']['count']).ReadAsArray())
         self.assertEqual(report['context_summary'], [])
 
+    def test_forest_only_preview_samples_measured_crowns_without_changing_analysis(self):
+        import re
+        values = np.full((201, 201), 100.0)
+        values[90:115, 105:125] = 115
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        forest = layer_for([(105, 86, 125, 111)])
+        baseline = self.engine().run()
+        report = self.engine({'lasy': (QgsVectorLayerFeatureSource(forest), forest.crs())}).run()
+        detail = next(d for d in report['details'] if d['model'] == 'NMPT')
+        payload = json.loads(re.search(r'const scene=(.*?);\n', Path(detail['scene']).read_text()).group(1))
+        self.assertGreater(len(payload['trees']), 0)
+        self.assertLessEqual(len(payload['trees']), 2000)
+        for tree in payload['trees']:
+            self.assertEqual(tree['source'], 'forest_sample')
+            self.assertEqual(tree['height'], 15)
+            self.assertGreaterEqual(tree['x'] + 80.5, 105)
+            self.assertLessEqual(tree['x'] + 80.5, 125)
+        self.assertTrue(any(item['role'] == 'korony_lasu' for item in payload['context_summary']))
+        for before, after in zip(baseline['products'], report['products']):
+            np.testing.assert_array_equal(gdal.Open(before['paths']['count']).ReadAsArray(), gdal.Open(after['paths']['count']).ReadAsArray())
+
+    def test_building_prisms_preserve_footprint_holes_and_require_measured_heights(self):
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.scene_context import building_preview
+        grid = Grid(0, 50, 1, 50, 50)
+        ground = np.full((50, 50), 100.0)
+        surface = np.full((50, 50), 112.0)
+        valid = np.ones((50, 50), bool)
+        geometry = QgsGeometry.fromWkt('POLYGON ((10 10,30 10,30 30,10 30,10 10),(15 15,15 25,25 25,25 15,15 15))')
+        turbine = dict(x=25, y=25)
+        item = building_preview(geometry, grid, turbine, 40, ground, valid, surface, valid)
+        self.assertIsNotNone(item)
+        self.assertEqual(item['height'], 12)
+        self.assertEqual(len(item['rings']), 2)
+        area = 0
+        for triangle in item['roof_triangles']:
+            a, b, c = triangle
+            area += abs((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]))/2
+            centroid = np.mean(triangle, axis=0)
+            self.assertFalse(-10 < centroid[0] < 0 and -10 < centroid[1] < 0, 'The courtyard must not receive a roof')
+        self.assertAlmostEqual(area, 300, places=5)
+        empty = np.zeros_like(valid)
+        self.assertIsNone(building_preview(geometry, grid, turbine, 40, ground, valid, surface, empty))
+        self.assertIsNone(building_preview(geometry, grid, turbine, 40, ground, valid, ground, valid))
+
+    def test_building_layer_is_scene_context_and_does_not_change_viewsheds(self):
+        import re
+        values = np.full((201, 201), 100.0)
+        values[90:110, 105:125] = 112
+        VisibilityTests.raster(self, 'NMPT', values, 1, origin=(0, 201))
+        buildings = layer_for([(105, 91, 125, 111)])
+        baseline = self.engine().run()
+        report = self.engine({'budynki_3d': (QgsVectorLayerFeatureSource(buildings), buildings.crs())}).run()
+        self.assertEqual(report['state'], baseline['state'])
+        self.assertEqual(report['context_summary'], [])
+        for detail in report['details']:
+            payload = json.loads(re.search(r'const scene=(.*?);\n', Path(detail['scene']).read_text()).group(1))
+            self.assertEqual(len(payload['buildings']), 1 if detail['model'] == 'NMPT' else 0)
+            if payload['buildings']:
+                self.assertEqual(payload['buildings'][0]['height'], 12)
+        for before, after in zip(baseline['products'], report['products']):
+            np.testing.assert_array_equal(gdal.Open(before['paths']['count']).ReadAsArray(), gdal.Open(after['paths']['count']).ReadAsArray())
+
+    def test_scene_context_layers_survive_refresh_and_report_reload(self):
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        report = self.engine().run()
+        forest = layer_for([(105, 86, 125, 111)])
+        QgsProject.instance().addMapLayer(forest)
+        window = QMainWindow()
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+        view, restored = WorkspaceDialog(Iface()), WorkspaceDialog(Iface())
+        try:
+            with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning') as warning:
+                filename = str(Path(report['report_dir']) / 'report.json')
+                view.load_report(filename)
+                view.scene_layers['lasy'].setLayer(forest)
+                view.scene_layers['budynki_3d'].setLayer(forest)
+                view.refresh_scene()
+                DownloaderTests.wait_until(self, lambda: view.task is None and view.export_job is None, 15000)
+                self.assertEqual(view.last_report['scene_view_options']['scene_context_layer_ids']['budynki_3d'], forest.id())
+                restored.load_report(filename)
+                self.assertIs(restored.scene_layers['lasy'].currentLayer(), forest)
+                self.assertIs(restored.scene_layers['budynki_3d'].currentLayer(), forest)
+                self.assertFalse(warning.called, warning.call_args)
+        finally:
+            view.deleteLater()
+            restored.deleteLater()
+
     def test_source_mask_cache_reused_and_invalidated_after_source_change(self):
         first = self.engine().run()
         self.assertEqual(first['state'], 'completed', first.get('fatal_error'))
