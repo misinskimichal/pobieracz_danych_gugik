@@ -10,7 +10,7 @@ const ctx = new Proxy({}, {get: (_, name) => (...args) => {
   commands.push([name, ...args]);
 }, set: () => true});
 const elements = {};
-for (const id of ['title', 'info', 'profile', 'bearing', 'tilt', 'vertical', 'cover', 'reset', 'view', 'low', 'high', 'bval', 'tval', 'vval']) {
+for (const id of ['title', 'info', 'profile', 'full-scene', 'bearing', 'tilt', 'vertical', 'cover', 'reset', 'view', 'low', 'high', 'bval', 'tval', 'vval']) {
   elements[id] = {value: id === 'tilt' ? 25 : id === 'vertical' ? 1 : 225,
     checked: true, handlers: {}, addEventListener(name, callback) {this.handlers[name] = callback;}};
 }

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from osgeo import ogr
 
-from .core import check_cancel
+from .core import VERSION, check_cancel
 
 EARTH_DIAMETER = 12756274.0  # 2 * GRS80 semi-major axis, as used by GDAL for EPSG:2180.
 STATES = {0: 'zasłonięta', 1: 'widoczna', 2: 'brak rozstrzygnięcia', 3: 'oko pod powierzchnią'}
@@ -182,6 +182,14 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     profile_svg(data, spec['resource'], turbine, profile_path)
     # Crop before decimating. Neither interpolation nor a larger mesh invents source detail.
     radius = min(spec['radius'], float(options.get('scene_radius', 0)) or spec['radius'])
+    camera = options.get('scene_observer')
+    camera_warning = None
+    if camera:
+        distance = math.hypot(float(camera[0])-turbine['x'], float(camera[1])-turbine['y'])
+        if distance < spec['radius']:
+            radius = max(radius, min(spec['radius'], distance + max(3*grid.step, distance*.05)))
+        else:
+            camera_warning = 'Wybrane miejsce obserwacji jest poza kołem tego modelu. Zwiększ zasięg analizy lub wybierz bliższe miejsce.'
     vertices = int(options.get('scene_vertices', 513))
     if vertices not in (129, 257, 513, 1025) or radius <= 0:
         raise ValueError('Nieprawidłowa gęstość lub promień sceny 3D')
@@ -203,7 +211,11 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     from .scene_context import scene_context
     forest, trees, context_summary = scene_context(scene_contexts or {}, transform_context, grid, turbine, radius, rows, cols,
                                                    ground, ground_valid, surface, surface_valid, event)
-    payload = dict(resource=spec['resource'], turbine=str(turbine['id']), radius=radius, demo=bool(options.get('demo')),
+    payload = dict(version=VERSION, resource=spec['resource'], turbine=str(turbine['id']), radius=radius, demo=bool(options.get('demo')),
+                   origin=[turbine['x'], turbine['y']], height_system=spec.get('height', ''),
+                   camera_observer=[float(camera[0])-turbine['x'], float(camera[1])-turbine['y']] if camera else None,
+                   eye_height=float(options.get('scene_eye', options['eye'])), start_eye=bool(options.get('scene_start_eye', False)),
+                   camera_warning=camera_warning,
                    profile_radius=spec['radius'], forest=forest, trees=trees, context_summary=context_summary,
                    texture_bounds=[grid.xmin+x0*grid.step-turbine['x'], grid.ymax-y1*grid.step-turbine['y'],
                                    grid.xmin+x1*grid.step-turbine['x'], grid.ymax-y0*grid.step-turbine['y']],
@@ -233,4 +245,5 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     return dict(model=spec['resource'], turbine=str(turbine['id']), profile=str(profile_path), scene=str(scene),
                 fallback_scene=str(fallback), scene_bounds=bounds, scene_radius=radius, vertices=[len(cols), len(rows)],
                 context_summary=context_summary, azimuth=data['azimuth'], preview_step_m=grid.step * stride,
-                profile_status=data['status'])
+                profile_status=data['status'], camera_observer=camera, camera_warning=camera_warning,
+                eye_height=payload['eye_height'])

@@ -501,6 +501,8 @@ class TerrainPlugin:
                 self.visibility_dialog.task.cancel()
             self.visibility_dialog.hide()
         if self.dialog:
+            if hasattr(self.dialog, 'stop_scene_picker'):
+                self.dialog.stop_scene_picker(show=False)
             if getattr(self.dialog, 'export_job', None):
                 self.dialog.export_job.cancel()
             if self.dialog.catalog_task:

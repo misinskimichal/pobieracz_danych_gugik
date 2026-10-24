@@ -1,7 +1,7 @@
 // Pure geometry/projection checks; QGIS users do not need Node.js.
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const {heightColor,multiply,lookAt,projection,terrainTile,vertexShader,fragmentShader}=require('../nmt_nmpt_downloader/scene_webgl.js');
+const {heightColor,multiply,lookAt,projection,terrainTile,vertexShader,fragmentShader,surfaceAt,eyePose}=require('../nmt_nmpt_downloader/scene_webgl.js');
 assert.deepEqual(vertexShader.match(/varying\s+mediump\s+\w+\s+\w+;/g),fragmentShader.match(/varying\s+mediump\s+\w+\s+\w+;/g),'Varying precision must match for strict GLSL ES/WebGL linkers');
 const s={x:[-1,0,1],y:[1,0,-1],radius:1,forest:[[0,0,0],[0,1,0],[0,0,0]]};
 const heights=[[0,0,0],[0,null,0],[0,0,0]];
@@ -27,5 +27,15 @@ for(const ortho of [true,false])for(const fov of [15,45,90]){
  assert(Array.from(matrix).every(Number.isFinite));
 }
 assert.notDeepEqual(heightColor(0),heightColor(1));
+const scene={x:[-10,0,10],y:[10,0,-10],radius:20,ground:[[100,100,100],[100,100,100],[100,100,100]],surface:[[100,100,100],[100,100,115],[100,100,100]]};
+assert.equal(surfaceAt(scene,scene.ground,-5,-5),100);
+const eyes=eyePose(scene,90,[-5,-5],1.7,45,0),turned=eyePose(scene,90,[-5,-5],1.7,180,-45);
+assert.equal(eyes.eyeZ,101.7);assert.deepEqual(eyes.eye,turned.eye,'Looking around must not move the observer');
+assert.notDeepEqual(eyes.target,turned.target);
+assert(eyePose(scene,90,[10,0],1.7,0,0).error.includes('dachem'));
+assert(eyePose(scene,90,[100,0],1.7,0,0).error.includes('Brak gruntu'));
+scene.ground[2][0]=null;assert.equal(surfaceAt(scene,scene.ground,-5,-8),null);
+const saddle={x:[0,10],y:[10,0],radius:20,ground:[[100,110],[110,100]],surface:[[100,110],[110,100]]};
+assert.equal(eyePose(saddle,90,[5,5],1.7,0,0).eyeZ,111.7,'Camera must stand above the rendered triangle, not below it on a bilinear saddle');
 if(process.argv[2])fs.writeFileSync(process.argv[2],JSON.stringify({vertexShader,fragmentShader}));
 console.log('PASS: mesh gaps, safe UInt16 patches, forest colors, finite camera matrices, orthographic and perspective FOV');

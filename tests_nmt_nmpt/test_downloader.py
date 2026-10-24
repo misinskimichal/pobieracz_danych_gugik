@@ -972,6 +972,7 @@ class AtlasTests(unittest.TestCase):
                 panel.folder.edit.setText(self.config['folders'][resource])
             dialog.report_folder.edit.setText(self.config['report_folder'])
             dialog.auto_download.setChecked(False)
+            dialog.scene_texture.setChecked(False)
             with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning'):
                 dialog.start()
                 DownloaderTests.wait_until(self, lambda: dialog.task is None and dialog.export_job is None and dialog.last_report is not None, 15000)
@@ -1352,6 +1353,173 @@ class AtlasTests(unittest.TestCase):
             self.assertNotEqual(view.last_report['report_dir'], original['report_dir'])
             self.assertEqual(original_file.read_bytes(), original_bytes)
         finally:
+            view.deleteLater()
+            canvas.deleteLater()
+
+    def test_texture_rejects_transparent_and_flat_gray_images(self):
+        from qgis.PyQt.QtGui import QColor, QImage
+        from nmt_nmpt_downloader.scene_texture import texture_quality
+        image = QImage(32, 32, QImage.Format_RGBA8888)
+        image.fill(QColor(127, 127, 127))
+        with self.assertRaisesRegex(ValueError, 'szare'):
+            texture_quality(image)
+        image.fill(QColor(0, 0, 0, 0))
+        with self.assertRaisesRegex(ValueError, 'przezroczyst'):
+            texture_quality(image)
+
+    def test_scene_refresh_preserves_analysis_files_and_updates_camera(self):
+        import hashlib
+        import re
+        from nmt_nmpt_downloader.scene_refresh import refresh_scenes
+        report = self.engine().run()
+        paths = [Path(p['paths'][name]) for p in report['products'] for name in ['count', 'quality', 'hub']]
+        before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+        opts = dict(scene_observer=[50.5, 100.5], scene_start_eye=True, scene_eye=1.7,
+                    view_turbine=1, scene_vertices=257, scene_radius=10, scene_texture=False)
+        with patch('nmt_nmpt_downloader.atlas.AtlasEngine.run') as engine, patch('nmt_nmpt_downloader.atlas.minimum_height') as viewshed:
+            refreshed = refresh_scenes(report, opts, self.event, CONTEXT)
+            engine.assert_not_called()
+            viewshed.assert_not_called()
+        self.assertEqual(before, {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths})
+        self.assertEqual(refreshed['products'], report['products'])
+        self.assertEqual(refreshed['options'], report['options'])
+        detail = next(d for d in refreshed['details'] if d['model'] == 'NMPT')
+        data = json.loads(re.search(r'const scene=(.*?);\n', Path(detail['scene']).read_text()).group(1))
+        self.assertEqual(data['camera_observer'], [-30.0, 0.0])
+        self.assertTrue(data['start_eye'])
+        self.assertAlmostEqual(data['eye_height'], 1.7)
+        self.assertGreater(detail['scene_radius'], 30, 'The chosen viewpoint must fit inside the scene')
+
+    def test_selected_xyz_texture_waits_for_tiles_and_ignores_height_overlay(self):
+        import time
+        from io import BytesIO
+        from PIL import Image
+        from qgis.PyQt.QtCore import QTimer
+        from qgis.core import QgsRasterLayer
+        from nmt_nmpt_downloader.scene_texture import SceneTextures
+        report = self.engine().run()
+        stream = BytesIO()
+        Image.new('RGB', (256, 256), (210, 50, 30)).save(stream, format='PNG')
+        payload = stream.getvalue()
+        calls = []
+
+        class Tiles(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+
+            def do_GET(self):
+                calls.append(self.path)
+                time.sleep(.25)
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/png')
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Tiles)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            uri = f'type=xyz&url=http://127.0.0.1:{server.server_port}/tile/{{z}}/{{x}}/{{y}}.png&zmin=0&zmax=0'
+            ortho = QgsRasterLayer(uri, 'Test ortofoto XYZ', 'wms')
+            self.assertTrue(ortho.isValid())
+            ortho.setOpacity(0)
+            ortho.setScaleBasedVisibility(True)
+            ortho.setMaximumScale(1)
+            QgsProject.instance().addMapLayer(ortho)
+            QgsProject.instance().layerTreeRoot().findLayer(ortho.id()).setItemVisibilityChecked(False)
+            gray = QgsRasterLayer(report['products'][1]['paths']['elevation'], 'NMT nad ortofoto', 'gdal')
+            QgsProject.instance().addMapLayer(gray)
+            report['options'].update(scene_texture_mode='layer', scene_texture_layer_id=ortho.id())
+            results, ticks = [], []
+            task = SceneTextures(report)
+            timer = QTimer()
+            timer.setInterval(10)
+            timer.timeout.connect(lambda: ticks.append(1))
+            timer.start()
+            task.completed.connect(results.append)
+            task.start()
+            DownloaderTests.wait_until(self, lambda: bool(results), 15000)
+            timer.stop()
+            self.assertNotIn('error', results[0], results)
+            self.assertTrue(calls)
+            self.assertGreater(len(ticks), 2)
+            self.assertEqual(ortho.opacity(), 0)
+            self.assertTrue(ortho.hasScaleBasedVisibility())
+            from qgis.PyQt.QtGui import QImage
+            for detail in report['details']:
+                image = QImage(detail['texture'])
+                color = image.pixelColor(image.width()//2, image.height()//2)
+                self.assertGreater(color.red(), 200)
+                self.assertLess(color.green(), 60)
+                self.assertEqual(detail['texture_layers'], ['Test ortofoto XYZ'])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_geoportal_texture_reprojects_3857_and_embeds_real_image_data(self):
+        from io import BytesIO
+        from PIL import Image
+        from nmt_nmpt_downloader.scene_texture import GeoportalTextureTask
+        report = self.engine().run()
+        yy, xx = np.mgrid[:32, :32]
+        image = np.stack([30+xx*6, 30+yy*6, np.full(xx.shape, 80)], axis=2).astype(np.uint8)
+        stream = BytesIO()
+        Image.fromarray(image).save(stream, format='PNG')
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def raise_for_status(self): pass
+            def iter_content(self, size): yield stream.getvalue()
+        with patch('nmt_nmpt_downloader.scene_texture.requests.Session') as session:
+            client = session.return_value.__enter__.return_value
+            client.get.return_value = Response()
+            task = GeoportalTextureTask(report)
+            self.assertTrue(task.run(), task.result)
+            params = client.get.call_args.kwargs['params']
+            self.assertEqual(params['CRS'], 'EPSG:3857')
+            self.assertEqual(params['VERSION'], '1.3.0')
+            self.assertGreater(float(params['BBOX'].split(',')[0]), 1000000)
+        self.assertTrue(all(d['texture_info']['mode'] == 'geoportal' for d in report['details']))
+
+    def test_qgis_pick_and_scene_only_refresh_use_saved_models(self):
+        import hashlib
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from qgis.PyQt.QtCore import Qt
+        from qgis.gui import QgsMapCanvas, QgsMapToolPan
+        from qgis.core import QgsPointXY
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        report = self.engine().run()
+        paths = [Path(p['paths']['count']) for p in report['products']]
+        before = [hashlib.sha256(p.read_bytes()).hexdigest() for p in paths]
+        window, canvas = QMainWindow(), QgsMapCanvas()
+        canvas.setDestinationCrs(QgsCoordinateReferenceSystem('EPSG:2180'))
+        pan = QgsMapToolPan(canvas)
+        canvas.setMapTool(pan)
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+            def mapCanvas(self): return canvas
+        view = WorkspaceDialog(Iface())
+        try:
+            with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning') as warning:
+                view.load_report(str(Path(report['report_dir']) / 'report.json'))
+                view.scene_texture.setChecked(False)
+                view.pick_scene_point()
+                self.assertIs(canvas.mapTool(), view.point_tool)
+                view.scene_point_picked(QgsPointXY(50.5, 100.5), Qt.LeftButton)
+                self.assertEqual(view.scene_observer, [50.5, 100.5])
+                self.assertIs(canvas.mapTool(), pan)
+                with patch('nmt_nmpt_downloader.atlas.AtlasEngine.run') as analysis:
+                    view.refresh_scene()
+                    DownloaderTests.wait_until(self, lambda: view.task is None and view.export_job is None, 15000)
+                    analysis.assert_not_called()
+                self.assertFalse(warning.called, warning.call_args)
+            self.assertTrue(view.last_report['details'])
+            self.assertEqual(before, [hashlib.sha256(p.read_bytes()).hexdigest() for p in paths])
+        finally:
+            view.stop_scene_picker(show=False)
             view.deleteLater()
             canvas.deleteLater()
 

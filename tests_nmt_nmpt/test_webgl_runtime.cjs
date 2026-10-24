@@ -14,13 +14,17 @@ Object.assign(methods,{
  enable:what=>{if(what===methods.DEPTH_TEST)depth=true},disable:what=>{if(what===methods.DEPTH_TEST)depth=false},
 });
 const gl=new Proxy(methods,{get:(target,name)=>name in target?target[name]:()=>{}}),elements={},frames=[];
-const ids=['title','info','profile','fallback','bearing','tilt','vertical','sun','projection','fov','material','cover','trees','lines','texture-option','status','view','low','high','bval','tval','vval','fval','reset','save'];
+methods.NO_ERROR=0;methods.getError=()=>0;
+const ids=['title','info','profile','fallback','bearing','tilt','vertical','sun','projection','fov','material','cover','trees','lines','texture-option','status','view','low','high','bval','tval','vval','fval','reset','save','camera','eye-height','locator','eye-status','texture-status','look-turbine','bearing-label'];
 for(const key of ids)elements[key]={value:{tilt:28,vertical:1,sun:300,projection:'perspective',fov:45,material:'height'}[key]??225,checked:true,handlers:{},addEventListener(name,cb){this.handlers[name]=cb}};
 Object.assign(elements.view,{clientWidth:1600,clientHeight:1000,getContext:()=>gl,setPointerCapture(){}});
+Object.assign(elements.locator,{width:320,height:320,getContext:()=>new Proxy({},{get:()=>()=>{},set:()=>true}),getBoundingClientRect:()=>({left:0,top:0,width:320,height:320})});
 const payload=process.argv[2]?JSON.parse(fs.readFileSync(process.argv[2],'utf8')):{resource:'NMPT',turbine:'demo',radius:100,profile_radius:100,step_m:50,analysis_step_m:1,azimuth:225,x:[-50,0,50],y:[50,0,-50],ground:[[90,100,null],[90,100,110],[90,95,100]],surface:[[90,115,null],[90,105,110],[90,95,100]],forest:[[0,1,0],[0,1,0],[0,0,0]],trees:[{x:0,y:0,ground:100,height:15}],ground_z:100,hub:30,diameter:20,eye:91.7,observer:[-70,-70],status:['widoczna','widoczna','widoczna']};
-const context={console,document:{getElementById:key=>elements[key]},window:{devicePixelRatio:1,addEventListener(){}},requestAnimationFrame:cb=>frames.push(cb),scene:payload,textureData:null};
+const images=[];class TestImage{constructor(){images.push(this)}set src(value){this.source=value}}
+const context={console,document:{getElementById:key=>elements[key]},window:{devicePixelRatio:1,addEventListener(){}},requestAnimationFrame:cb=>frames.push(cb),scene:payload,textureData:'data:image/png;base64,fixture',Image:TestImage};
 vm.runInNewContext(fs.readFileSync('nmt_nmpt_downloader/scene_webgl.js','utf8'),context);frames.shift()();
 assert(elements.status.textContent.startsWith('Gotowe'),elements.status.textContent);
+if(elements.camera.value==='eye'){assert.equal(+elements.vertical.value,1);elements.reset.onclick();frames.shift()();elements.lines.checked=true;elements.lines.handlers.input();frames.shift()()}
 assert(draws.some(d=>d.mode===methods.TRIANGLES&&d.indices));
 assert(draws.some(d=>d.mode===methods.LINES&&!d.depth),'Visibility lines are an explicitly unoccluded overlay');
 for(const d of draws){assert(buffers[d.vertices].length%12===0);if(d.indices)assert(Array.from(buffers[d.indices]).every(i=>i<buffers[d.vertices].length/12))}
@@ -29,11 +33,23 @@ elements.projection.value='ortho';elements.projection.handlers.input();frames.sh
 elements.material.value='cover';elements.material.handlers.input();frames.shift()();assert(elements.status.textContent.startsWith('Gotowe'));
 elements.cover.checked=false;elements.cover.handlers.input();frames.shift()();assert(elements.status.textContent.startsWith('Gotowe'));
 elements.reset.onclick();frames.shift()();assert.equal(elements.bearing.value,payload.azimuth);
+elements.camera.value='eye';elements.camera.handlers.input();frames.shift()();
+assert.equal(elements.camera.value,'eye',elements['eye-status'].textContent);
+assert.equal(+elements.vertical.value,1);assert.equal(elements.projection.value,'perspective');
+assert.equal(elements.lines.checked,false);assert(elements['eye-status'].textContent.includes('NMT'));
+const eyeMatrix=matrix.slice();elements.bearing.value=(+elements.bearing.value+25)%360;elements.bearing.handlers.input();frames.shift()();assert.notDeepEqual(matrix,eyeMatrix);
+elements.view.onpointerdown({clientX:100,clientY:100,pointerId:1});elements.view.onpointermove({clientX:100,clientY:600});frames.shift()();assert(+elements.tilt.value<0,'Eye mode must allow looking down');elements.view.onpointerup();
+elements.view.handlers.keydown({key:'ArrowUp',shiftKey:false,preventDefault(){}});if(frames.length)frames.shift()();
+if(!process.argv[2]){elements.locator.handlers.pointerdown({clientX:32,clientY:288});if(frames.length)frames.shift()();assert(elements['eye-status'].textContent.includes('X=-40.00'))}
+elements.reset.onclick();frames.shift()();
+images[0].onerror();assert(elements['texture-status'].textContent.includes('Nie można'));
+images[0].onload();frames.shift()();assert.equal(elements.material.value,'texture');assert.equal(elements['texture-option'].disabled,false);assert(elements['texture-status'].textContent.includes('wczytana'));
 // Optional exact GPU replay data for development-only verification of a synthetic scene.
 if(process.argv[3]){
- elements.cover.checked=true;elements.material.value='cover';elements.cover.handlers.input();draws=[];frames.shift()();
+ elements.cover.checked=true;elements.material.value='texture';elements.cover.handlers.input();draws=[];frames.shift()();
+ if(process.argv[4]==='eye'){const b=payload.texture_bounds||[payload.x[0],payload.y[payload.y.length-1],payload.x[payload.x.length-1],payload.y[0]],point=payload.camera_observer;assert(point);draws=[];elements.locator.handlers.pointerdown({clientX:(point[0]-b[0])/(b[2]-b[0])*320,clientY:(b[3]-point[1])/(b[3]-b[1])*320});frames.shift()();assert.equal(elements.camera.value,'eye')}
  const out=process.argv[3];fs.mkdirSync(out,{recursive:true});const used=new Set(draws.flatMap(d=>d.indices?[d.vertices,d.indices]:[d.vertices]));
  for(const key of used)fs.writeFileSync(`${out}/buffer_${key}.bin`,Buffer.from(buffers[key].buffer,buffers[key].byteOffset,buffers[key].byteLength));
- fs.writeFileSync(`${out}/frame.json`,JSON.stringify({matrix,draws,methods,vertical:+elements.vertical.value,texture:payload.texture_bounds,radius:payload.radius}));
+ fs.writeFileSync(`${out}/frame.json`,JSON.stringify({matrix,draws,methods,vertical:+elements.vertical.value,texture:payload.texture_bounds,radius:payload.radius,camera:elements.camera.value,eye_info:elements['eye-status'].textContent,material:elements.material.value}));
 }
 console.log('PASS: WebGL runtime, finite buffers, tree/turbine geometry, depth test, camera, FOV, materials and terrain toggle');

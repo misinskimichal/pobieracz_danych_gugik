@@ -2,15 +2,17 @@
 from pathlib import Path
 import json
 import time
+import threading
+import math
 
-from qgis.PyQt.QtCore import QSettings, QTimer, QUrl, pyqtSignal
+from qgis.PyQt.QtCore import QSettings, QTimer, QUrl, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGroupBox,
     QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
     QSpinBox, QTableWidget, QVBoxLayout, QWidget,
 )
-from qgis.core import (QgsApplication, QgsCoordinateTransformContext, QgsFieldProxyModel,
+from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsCoordinateTransformContext, QgsFieldProxyModel,
                        QgsMapLayerProxyModel, QgsProject, QgsTask, QgsVectorLayer, QgsVectorLayerFeatureSource)
 from qgis.gui import QgsFieldComboBox, QgsMapLayerComboBox
 
@@ -43,6 +45,32 @@ class AtlasTask(QgsTask):
 
     def finished(self, success):
         self.completed.emit(self.result or dict(state='canceled' if self.isCanceled() else 'failed'))
+
+
+class SceneRefreshTask(QgsTask):
+    message = pyqtSignal(str)
+    completed = pyqtSignal(object)
+
+    def __init__(self, report, options, context, scene_contexts):
+        super().__init__('Odświeżenie sceny 3D z zapisanych modeli', QgsTask.CanCancel)
+        self.report, self.options, self.context, self.scene_contexts = report, options, context, scene_contexts
+        self.event, self.result = threading.Event(), None
+
+    def run(self):
+        from .scene_refresh import refresh_scenes
+        try:
+            self.result = refresh_scenes(self.report, self.options, self.event, self.context, self.scene_contexts, self.message.emit)
+            return True
+        except Exception as exc:
+            self.result = dict(error=str(exc), canceled=self.event.is_set())
+            return False
+
+    def cancel(self):
+        self.event.set()
+        super().cancel()
+
+    def finished(self, success):
+        self.completed.emit(self.result or dict(canceled=True))
 
 
 def metric(value, minimum, maximum):
@@ -101,6 +129,7 @@ class WorkspaceDialog(QDialog):
         self.report_dir = None
         self.atlas_layers = {}
         self.running_atlas = True
+        self.scene_only, self.scene_observer, self.point_tool, self.previous_map_tool = False, None, None, None
         self.setWindowTitle(PLUGIN_NAME + ' · Atlas widoczności ' + VERSION)
         self.resize(1130, 940)
         self.setStyleSheet('QGroupBox{border:1px solid #cddce0;border-radius:7px;margin-top:10px;padding:12px 8px 6px}QGroupBox::title{subcontrol-origin:margin;left:12px;padding:0 5px}QPushButton#primary{background:#164b5d;color:white;padding:10px 20px;border:0;border-radius:5px;font-weight:bold}')
@@ -204,6 +233,22 @@ class WorkspaceDialog(QDialog):
         self.scene_radius.setSpecialValueText('Cały promień analizy')
         detail_form.addRow('Gęstość siatki 3D (bez zmiany analizy):', self.scene_quality)
         detail_form.addRow('Mniejszy promień samej sceny 3D (0 = cały):', self.scene_radius)
+        self.scene_start_eye = QCheckBox('Otwórz scenę z poziomu oczu (miejsce można zmieniać na mapce w przeglądarce)')
+        self.scene_start_eye.setChecked(True)
+        detail_form.addRow(self.scene_start_eye)
+        point_row = QWidget()
+        point_layout = QHBoxLayout(point_row)
+        point_layout.setContentsMargins(0, 0, 0, 0)
+        self.pick_point_button = QPushButton('Wskaż miejsce patrzenia w QGIS')
+        self.clear_point_button = QPushButton('Wyczyść punkt')
+        self.pick_point_button.clicked.connect(self.pick_scene_point)
+        self.clear_point_button.clicked.connect(self.clear_scene_point)
+        point_layout.addWidget(self.pick_point_button)
+        point_layout.addWidget(self.clear_point_button)
+        detail_form.addRow(point_row)
+        self.scene_point_label = QLabel('Punkt nie jest wymagany — w scenie klikniesz własne miejsce na mapce. Wysokość początkowa = oko nad gruntem NMT.')
+        self.scene_point_label.setWordWrap(True)
+        detail_form.addRow(self.scene_point_label)
         self.scene_layers = {}
         for role, title, filters in [('lasy', 'Lasy / zadrzewienia (opcjonalnie BDOT):', QgsMapLayerProxyModel.PolygonLayer),
                                      ('drzewa', 'Drzewa — punkty (opcjonalnie BDOT):', QgsMapLayerProxyModel.PointLayer)]:
@@ -213,9 +258,30 @@ class WorkspaceDialog(QDialog):
             combo.setLayer(None)
             self.scene_layers[role] = combo
             detail_form.addRow(title, combo)
-        self.scene_texture = QCheckBox('Nałóż na 3D teksturę z widocznych podkładów projektu (np. ortofotomapy)')
+        self.scene_texture = QCheckBox('Nałóż ortofotomapę na model 3D')
+        self.scene_texture.setChecked(True)
         detail_form.addRow(self.scene_texture)
-        note = QLabel('Mniejszy zasięg daje drobniejszy piksel 3D. Rzeczywisty krok jest podany w scenie. BDOT określa pokrycie; wysokości pochodzą z NMT/NMPT. Tekstura WMS może wymagać połączenia z siecią.')
+        self.texture_mode = QComboBox()
+        self.texture_mode.addItem('Geoportal · ortofotomapa online', 'geoportal')
+        self.texture_mode.addItem('Wybrana warstwa rastrowa QGIS', 'layer')
+        self.texture_mode.addItem('Widoczne warstwy projektu · zaawansowane', 'visible')
+        self.texture_layer = QgsMapLayerComboBox()
+        self.texture_layer.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        self.texture_layer.setAllowEmptyLayer(True)
+        from .scene_texture import ortho_candidate
+        candidate = ortho_candidate(QgsProject.instance())
+        self.texture_layer.setLayer(candidate)
+        if candidate:
+            self.texture_mode.setCurrentIndex(1)
+        self.texture_mode.currentIndexChanged.connect(lambda: self.texture_layer.setEnabled(self.texture_mode.currentData() == 'layer'))
+        self.texture_layer.setEnabled(candidate is not None)
+        detail_form.addRow('Źródło ortofotomapy:', self.texture_mode)
+        detail_form.addRow('Warstwa zdjęcia (bez NMT/NMPT nad nim):', self.texture_layer)
+        self.refresh_scene_button = QPushButton('Odśwież samą scenę 3D / ortofotomapę · bez przeliczania widoczności')
+        self.refresh_scene_button.setEnabled(False)
+        self.refresh_scene_button.clicked.connect(self.refresh_scene)
+        detail_form.addRow(self.refresh_scene_button)
+        note = QLabel('Ortofotomapa Geoportal/WMS/WMTS wymaga sieci. Brak lub szare tło jest raportowane. Odświeżenie sceny nie zmienia map widoczności. W widoku z oczu wysokość liczona jest nad NMT; dachy i korony NMPT mogą zasłaniać widok.')
         note.setWordWrap(True)
         detail_form.addRow(note)
         form.addRow(self.detail_box)
@@ -412,11 +478,73 @@ class WorkspaceDialog(QDialog):
                     view_turbine=self.view_turbine.value(), view_azimuth=self.view_azimuth.value(),
                     scene_vertices=self.scene_quality.currentData(), scene_radius=self.scene_radius.value(),
                     scene_texture=self.scene_texture.isChecked())
+        opts.update(self.view_options())
         return layer, opts, contexts
+
+    def view_options(self):
+        return dict(view_turbine=self.view_turbine.value(), view_azimuth=self.view_azimuth.value(),
+                    scene_vertices=self.scene_quality.currentData(), scene_radius=self.scene_radius.value(),
+                    scene_eye=self.eye.value(), scene_start_eye=self.scene_start_eye.isChecked(), scene_observer=self.scene_observer,
+                    scene_texture=self.scene_texture.isChecked(), scene_texture_mode=self.texture_mode.currentData(),
+                    scene_texture_layer_id=self.texture_layer.currentLayer().id() if self.texture_layer.currentLayer() else '')
+
+    def update_scene_point_label(self):
+        self.scene_point_label.setText('Miejsce patrzenia EPSG:2180: X={:.2f}, Y={:.2f}. Wysokość nad gruntem NMT.'.format(*self.scene_observer)
+                                       if self.scene_observer else 'Punkt opcjonalny — w scenie klikniesz własne miejsce na mapce.')
+
+    def clear_scene_point(self):
+        self.scene_observer = None
+        self.update_scene_point_label()
+
+    def pick_scene_point(self):
+        if self.task or self.export_job or self.point_tool:
+            return
+        from .scene_point_tool import ScenePointTool
+        canvas = self.iface.mapCanvas()
+        self.previous_map_tool = canvas.mapTool()
+        self.point_tool = ScenePointTool(canvas)
+        self.point_tool.canvasClicked.connect(self.scene_point_picked)
+        self.point_tool.canceled.connect(self.stop_scene_picker)
+        self.hide()
+        canvas.setMapTool(self.point_tool)
+        self.iface.mainWindow().statusBar().showMessage('Kliknij miejsce patrzenia. Escape anuluje wybór.')
+
+    def stop_scene_picker(self, show=True):
+        if self.point_tool:
+            tool = self.point_tool
+            canvas = self.iface.mapCanvas()
+            if self.previous_map_tool:
+                canvas.setMapTool(self.previous_map_tool)
+            else:
+                canvas.unsetMapTool(self.point_tool)
+            self.point_tool = None
+            self.previous_map_tool = None
+            tool.deleteLater()
+            self.iface.mainWindow().statusBar().clearMessage()
+        if show:
+            self.show()
+            self.raise_()
+
+    def scene_point_picked(self, point, button):
+        if button == Qt.LeftButton:
+            try:
+                canvas = self.iface.mapCanvas()
+                transform = QgsCoordinateTransform(canvas.mapSettings().destinationCrs(), QgsCoordinateReferenceSystem('EPSG:2180'),
+                                                   QgsProject.instance().transformContext())
+                projected = transform.transform(point)
+                if not all(math.isfinite(v) for v in (projected.x(), projected.y())):
+                    raise ValueError('Nieprawidłowe współrzędne')
+                self.scene_observer = [projected.x(), projected.y()]
+                self.scene_start_eye.setChecked(True)
+                self.update_scene_point_label()
+            except Exception as exc:
+                QMessageBox.warning(self, PLUGIN_NAME, 'Nie można wskazać miejsca. Sprawdź CRS mapy. ' + str(exc))
+        self.stop_scene_picker()
 
     def start(self, local_only=False, previous_report=None):
         if self.task or self.export_job:
             return
+        self.scene_only = False
         try:
             layer, options, contexts = self.options()
             self.running_atlas = self.mode.currentIndex() == 0
@@ -424,7 +552,6 @@ class WorkspaceDialog(QDialog):
             source = QgsVectorLayerFeatureSource(layer)
             if local_only:
                 from .visibility import read_points
-                import threading
                 points, issues = read_points(source, layer.crs(), context, 'turbines', options, threading.Event())
                 positions = sorted((str(t['id']), round(t['x'], 3), round(t['y'], 3)) for t in points)
                 original = sorted((str(t['id']), round(t['x'], 3), round(t['y'], 3)) for t in previous_report['turbines'])
@@ -469,6 +596,51 @@ class WorkspaceDialog(QDialog):
                     except Exception as exc:
                         self.log.appendPlainText('Indeks folderu: ' + str(exc))
         QgsApplication.taskManager().addTask(self.task)
+
+    def refresh_scene(self):
+        if self.task or self.export_job or not self.last_report:
+            return
+        self.scene_only = True
+        contexts = {role: (QgsVectorLayerFeatureSource(combo.currentLayer()), combo.currentLayer().crs())
+                    for role, combo in self.scene_layers.items() if combo.currentLayer() is not None}
+        self.task = SceneRefreshTask(self.last_report, self.view_options(),
+                                     QgsCoordinateTransformContext(QgsProject.instance().transformContext()), contexts)
+        self.task.message.connect(self.stage.setText)
+        self.task.message.connect(self.log.appendPlainText)
+        self.task.completed.connect(self.scene_refreshed)
+        self.inputs.setEnabled(False)
+        self.load_button.setEnabled(False)
+        self.start_button.setEnabled(False)
+        self.rerun_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.progress.setRange(0, 0)
+        self.clock_started = time.monotonic()
+        self.clock.start()
+        QgsApplication.taskManager().addTask(self.task)
+
+    def scene_refreshed(self, result):
+        self.task = None
+        if result.get('error') or result.get('canceled'):
+            self.last_report['presentation_error'] = result.get('error', 'Anulowano odświeżenie sceny')
+            self.complete(self.last_report)
+            return
+        self.last_report, self.report_dir = result, result['report_dir']
+        if self.scene_texture.isChecked():
+            from .scene_texture import SceneTextures
+            self.export_job = SceneTextures(result, self)
+            self.export_job.status.connect(self.stage.setText)
+            self.export_job.status.connect(self.log.appendPlainText)
+            self.export_job.completed.connect(self.textures_finished)
+            self.export_job.start()
+        else:
+            self.finish_scene_view()
+
+    def finish_scene_view(self):
+        from .atlas_presentation import make_html
+        presentation = self.last_report.setdefault('presentation', dict(png=[]))
+        presentation.setdefault('png', [])
+        make_html(self.last_report, presentation)
+        self.complete(self.last_report)
 
     def update_stats(self, stats):
         if stats.get('kind') == 'download' or 'bytes' in stats:
@@ -542,7 +714,9 @@ class WorkspaceDialog(QDialog):
             if result.get('error'):
                 self.last_report['scene_texture_error'] = result['error']
                 self.log.appendPlainText('Tekstura 3D: ' + result['error'])
-            if self.export_after.isChecked():
+            if self.scene_only:
+                self.finish_scene_view()
+            elif self.export_after.isChecked():
                 self.launch_export()
             else:
                 self.complete(self.last_report)
@@ -575,6 +749,7 @@ class WorkspaceDialog(QDialog):
         self.profile_button.setEnabled(bool(report.get('details')))
         self.scene_button.setEnabled(bool(report.get('details')))
         self.rerun_button.setEnabled(bool(report.get('turbines') and report.get('products')))
+        self.refresh_scene_button.setEnabled(bool(report.get('turbines') and report.get('products')))
         text = {'completed': 'Gotowe — atlas wykonany' if self.running_atlas else 'Pobieranie wykonane',
                 'completed_with_gaps': 'Zakończono — sprawdź oznaczone braki danych',
                 'canceled': 'Anulowano; ukończone wyniki zachowano', 'failed': 'Zadanie nie powiodło się'}[report['state']]
@@ -582,12 +757,19 @@ class WorkspaceDialog(QDialog):
             text += '\n' + report['fatal_error']
         if report.get('presentation_error'):
             text += '\nProblem prezentacji: ' + report['presentation_error']
+        if report.get('scene_texture_error'):
+            text += '\nOrtofotomapa: ' + report['scene_texture_error']
+        if self.scene_only:
+            text = ('Nie ukończono odświeżenia sceny.' if report.get('presentation_error') else
+                    'Odświeżono scenę 3D; mapy widoczności pozostają z poprzednich obliczeń.') + (
+                '\nOrtofotomapa: ' + report['scene_texture_error'] if report.get('scene_texture_error') else '') + (
+                '\n' + report['presentation_error'] if report.get('presentation_error') else '')
         self.stage.setText(text)
         self.log.appendPlainText(text)
         self.inputs.setEnabled(True)
         self.load_button.setEnabled(True)
         self.start_button.setEnabled(True)
-        if report['state'] == 'completed' and not report.get('presentation_error'):
+        if report['state'] == 'completed' and not report.get('presentation_error') and not report.get('scene_texture_error'):
             QMessageBox.information(self, PLUGIN_NAME, text)
         else:
             QMessageBox.warning(self, PLUGIN_NAME, text)
@@ -653,6 +835,7 @@ class WorkspaceDialog(QDialog):
             self.hub_field.setField('piasta_m')
             self.diameter_field.setField('srednica_m')
             opts = report['options']
+            view = report.get('scene_view_options') or opts
             for resource, panel in self.panels.items():
                 model = next((s for s in opts['models'] if s['resource'] == resource), None)
                 panel.enabled.setChecked(model is not None)
@@ -667,12 +850,21 @@ class WorkspaceDialog(QDialog):
             for key, widget in [('eye', self.eye), ('hub', self.hub), ('diameter', self.diameter),
                                 ('view_turbine', self.view_turbine), ('view_azimuth', self.view_azimuth),
                                 ('scene_radius', self.scene_radius), ('ray_spacing', self.ray_spacing)]:
-                if key in opts:
-                    widget.setValue(opts[key])
-            self.scene_quality.setCurrentIndex(max(0, self.scene_quality.findData(opts.get('scene_vertices', 513))))
+                values = view if key in ('view_turbine', 'view_azimuth', 'scene_radius') else opts
+                if key in values:
+                    widget.setValue(values[key])
+            self.eye.setValue(view.get('scene_eye', opts.get('eye', 1.7)))
+            self.scene_quality.setCurrentIndex(max(0, self.scene_quality.findData(view.get('scene_vertices', 513))))
+            self.scene_observer = view.get('scene_observer')
+            self.scene_start_eye.setChecked(bool(view.get('scene_start_eye', True)))
+            self.texture_mode.setCurrentIndex(max(0, self.texture_mode.findData(view.get('scene_texture_mode', 'geoportal'))))
+            chosen_texture = QgsProject.instance().mapLayer(view.get('scene_texture_layer_id', ''))
+            if chosen_texture:
+                self.texture_layer.setLayer(chosen_texture)
+            self.update_scene_point_label()
             for key, checkbox in [('curvature', self.curvature), ('rays', self.rays), ('details', self.details),
                                   ('scene_texture', self.scene_texture)]:
-                checkbox.setChecked(bool(opts.get(key, key != 'scene_texture')))
+                checkbox.setChecked(bool((view if key == 'scene_texture' else opts).get(key, key != 'scene_texture')))
             for key, combo in dict(self.context_layers, **self.scene_layers).items():
                 combo.setLayer(QgsProject.instance().mapLayer(opts.get('context_layer_ids', {}).get(key, '')))
             self.auto_download.setChecked(False)
@@ -696,6 +888,7 @@ class WorkspaceDialog(QDialog):
             self.last_report, self.report_dir, self.running_atlas = report, str(path.parent), True
             self.atlas_layers = {}
             self.rerun_button.setEnabled(True)
+            self.refresh_scene_button.setEnabled(True)
             self.report_button.setEnabled(True)
             self.map_button.setEnabled(True)
             self.ray_button.setEnabled(bool(report.get('rays_gpkg')))

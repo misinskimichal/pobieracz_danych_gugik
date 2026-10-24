@@ -3,7 +3,8 @@
 <style>*{box-sizing:border-box}body{margin:0;background:#102b38;color:#e9f3f5;font:15px system-ui,sans-serif}header{padding:20px 28px;background:#153747}h1{font-size:25px;margin:0 0 8px}p{margin:5px 0;color:#b6d1da;line-height:1.5}.controls{display:flex;gap:14px 22px;flex-wrap:wrap;padding:15px 28px;align-items:center}label{display:flex;gap:8px;align-items:center}input[type=range]{width:105px;accent-color:#6dd6ad}a,button,select{color:#153747;background:#8de1ca;border:0;border-radius:6px;padding:8px 12px;text-decoration:none;cursor:pointer}canvas{display:block;width:100%;height:65vh;min-height:360px;touch-action:none;background:#dce9e9}aside{padding:16px 28px;line-height:1.65;color:#bfd6dd}.key{display:inline-block;width:160px;height:12px;background:linear-gradient(90deg,#21865a,#e4d45e,#d34747);margin:0 12px;vertical-align:middle}output{min-width:30px}#status{padding:8px 28px;color:#94ddcd}@media print{.controls{display:none}body,header{background:white;color:#153747}p,aside{color:#153747}canvas{height:65vh}}</style>
 <header><h1 id="title">Scena 3D</h1><p id="info"></p><p>Przeciągnij, aby obrócić. Kółko myszy powiększa. Gęsta siatka jest renderowana przez WebGL.</p></header>
 <div class="controls">
-<label>Strona <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
+<label>Widok <select id="camera"><option value="orbit">Przegląd modelu</option><option value="eye">Z poziomu oczu</option></select></label>
+<label><span id="bearing-label">Strona</span> <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
 <label>Nachylenie <input id="tilt" type="range" min="8" max="80" value="28"><output id="tval"></output></label>
 <label>Pion × <input id="vertical" type="range" min="1" max="5" step=".25" value="1"><output id="vval"></output></label>
 <label>Oświetlenie <input id="sun" type="range" min="0" max="360" value="300"></label>
@@ -13,9 +14,15 @@
 <label><input id="cover" type="checkbox" checked>Powierzchnia NMPT</label>
 <label><input id="trees" type="checkbox" checked>Symbole drzew</label>
 <label><input id="lines" type="checkbox" checked>Linie przekroju</label>
+<label>Oko nad NMT <input id="eye-height" type="number" min="0.3" max="100" step="0.1" value="1.7" style="width:75px"> m</label>
+<button id="look-turbine">Patrz na turbinę</button>
 <button id="reset">Przywróć kamerę</button><button id="save">Zapisz PNG</button><a id="profile">Przekrój</a><a id="fallback">Lekki podgląd bez WebGL</a>
-</div><div id="status" role="status">Przygotowanie siatki…</div>
-<canvas id="view" aria-label="Szczegółowa scena 3D terenu i turbiny"></canvas>
+</div><div id="texture-status" role="status" style="padding:8px 28px;color:#ffd17d"></div>
+<div style="display:flex;gap:18px;align-items:center;padding:0 28px;flex-wrap:wrap">
+<canvas id="locator" width="320" height="320" style="width:260px;height:260px;min-height:0;cursor:crosshair" aria-label="Kliknij miejsce patrzenia na mapie"></canvas>
+<div style="max-width:650px"><b>Kliknij na mapce, skąd chcesz patrzeć.</b><p id="eye-status">Wysokość oka jest liczona ponad gruntem NMT. Czerwony punkt oznacza turbinę.</p><p>W widoku z oczu przeciąganie rozgląda się z tego samego miejsca. Strzałki / W A S D po kliknięciu sceny przesuwają obserwatora. Shift zwiększa krok. Kółko zmienia kąt widzenia. Pion jest ustawiony na 1:1.</p></div></div>
+<div id="status" role="status">Przygotowanie siatki…</div>
+<canvas id="view" tabindex="0" aria-label="Szczegółowa scena 3D terenu i turbiny"></canvas>
 <aside><span id="low"></span><span class="key"></span><span id="high"></span><br>
 Kolory wysokości opisują metry. W trybie pokrycia zielony las pochodzi z wybranej warstwy BDOT; nie dodajemy mu umownej wysokości. Symbole drzew mają wysokość z różnicy NMPT−NMT w ich położeniu; kształt korony jest ilustracyjny. Pokrycie i drzewa służą prezentacji, nie zmieniają obliczonej widoczności.<br>
 To powierzchnia 2,5D oglądana w 3D. Podgląd może mieć rzadszą siatkę niż analiza — oba kroki pokazano w nagłówku. Braki są otworami. Pion ×1 zachowuje proporcje metrów. Oświetlenie nie jest analizą cieni słonecznych. Linie widzenia są nakładką; przy włączonej nakładce nie znikają za siatką. Kamera porusza się niezależnie od obserwatora przekroju. Krzywizna jest uwzględniana w analizie i profilu zgodnie z opcją; scena jest lokalna i płaska. Las w NMPT to pełna powierzchnia bez modelu prześwitów i sezonowości.</aside>

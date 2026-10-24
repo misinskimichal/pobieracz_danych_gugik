@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.2.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.3.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -11,6 +11,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Wydanie 2.1.0:** promienie widoczności konkretnych turbin, barwna mapa wysokości, przekrój i obracana scena powierzchni 3D oraz asynchroniczne renderowanie map — [pełna instrukcja i opis implementacji 2.1.0](Instrukcja_ATLAS_2.1.0.md). Prezentacja 3D powierzchni nie oznacza pełnego ray tracingu brył.
 
 **Wydanie 2.2.0:** gęstsze WebGL, opcjonalna tekstura mapy i warstwy BDOT, raport w panelu warstw oraz odtwarzanie i ponowne przeliczanie na lokalnych modelach — [instrukcja 2.2.0 i omówienie PDF](Instrukcja_ATLAS_2.2.0.md).
+
+**Wydanie 2.3.0:** poprawiony wybór i oczekiwanie na ortofotomapę, kamera z poziomu oczu, wskazywanie miejsca w QGIS lub na mapce oraz odświeżanie samej sceny z zapisanych modeli — [instrukcja 2.3.0](Instrukcja_ATLAS_2.3.0.md).
 
 ## Spis treści
 
@@ -1719,3 +1721,12 @@ Poligony lasów klasyfikują materiał; punkty drzew uzyskują wysokość z NMPT
 Warstwa `raport.gpkg` daje menu raportu, scen i przekrojów w panelu QGIS. Akcje zostają z projektem. `report.json` oraz `atlas.gpkg` pozwalają odtworzyć punkty, pierwotne identyfikatory i indywidualne wysokości. Przeliczenie używa nowych parametrów i lokalnych źródeł, tworzy osobny katalog i zapisuje pochodzenie wariantu w `options.recalculate_from`. Zmiana geometrii/zestawu wymaga zwykłego uruchomienia. Cache masek poprawnych pikseli jest identyfikowany stanem źródła i plików towarzyszących; nie zastępuje obliczeń nowych cieni ani źródłowych rastrów.
 
 Zweryfikowano 68 testów Python/QGIS oraz testy geometrii i sterowania JavaScript, a shadery skompilowano i użyto do renderowania przez Mesa/EGL. Publiczne sceny są syntetyczne. Załącznik użytkownika i jego geometrie nie są publikowane.
+
+
+## Suplement J — wdrożone w 2.3.0: ortofoto i kamera nad gruntem
+
+[Instrukcja 2.3.0](Instrukcja_ATLAS_2.3.0.md) opisuje aktualizację istniejącego wyniku, wybór pojedynczej warstwy zdjęciowej lub Geoportalu, diagnostykę pustego/szarego obrazu oraz widok z oczu. Renderer kafli używa `RenderBlocking` asynchronicznie. Geoportal jest pobierany w tle, z obrazem EPSG:3857 przeliczanym na dokładne granice sceny EPSG:2180. Oryginalne style, przezroczystość i skale warstw projektu nie są modyfikowane.
+
+Kamerę ustawia kliknięcie mapki sceny albo punkt wskazany w QGIS. Wysokość jest liczona z NMT i podanego oka, z tym samym trójkątem co renderowany teren. Pion = 1:1, rzut perspektywiczny, obrót z miejsca i ruch klawiszami. Brak gruntu lub oko pod powierzchnią dachu/korony jest komunikowane. Miejsce w przeglądarce nie zastępuje obserwatora zapisanego przekroju i nie zmienia rastrów analizy.
+
+`scene_refresh.py` odczytuje modele prezentacji z zakończonego atlasu, odtwarza sceny i zapisuje `scene_view_options`. Nie wykonuje pobierania ani `ViewshedGenerate`. Testy hashów potwierdzają zachowanie rastrów liczby turbin i jakości. Odświeżenie starego HTML wymaga użycia nowego przycisku; sam ZIP nie przebudowuje dawnych plików.

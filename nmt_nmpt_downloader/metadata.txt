@@ -2,9 +2,9 @@
 name=NMT i NMTP ściągacz
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
-version=2.2.0
+version=2.3.0
 author=Projekt lokalny
-description=Atlas NMT/NMPT, szczegółowe 3D WebGL z teksturą/BDOT, raport w panelu warstw i ponowne przeliczanie na lokalnych modelach.
+description=Atlas NMT/NMPT, ortofotomapa z wybranego źródła, widok 3D z poziomu oczu i wybór miejsca patrzenia na mapie.
 about=Jeden formularz pobierania i analizy. Osobne promienie i kroki NMT/NMPT. Obserwatorzy opcjonalni. Mapy liczby widocznych turbin, trzech wysokości wirnika i braków danych, GeoTIFF/GeoPackage/CSV/JSON, atlas PDF/PNG/HTML.
 category=Raster
 icon=icon.svg

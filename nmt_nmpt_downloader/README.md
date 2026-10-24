@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.2.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.3.0
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.2.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.3.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -75,3 +75,14 @@ Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_N
 - Cache poprawności źródeł w `<folder atlasów>/.nmt_nmpt_cache/validity` ogranicza ponowne skanowanie pikseli. Zmiana źródła lub jego maski/metadanych unieważnia klucz. Samą widoczność przeliczamy ponownie.
 
 [Dokładna instrukcja i omówienie inspiracji z PDF](../docs/Instrukcja_ATLAS_2.2.0.md). Nowe pliki wyniku: `raport.gpkg`, `scena_3d_lekka_*.html` i opcjonalnie `tekstura_*.png`. Szczegółowa scena zawiera obraz w sobie. Modeli, cache i raportów użytkownika nie ma w ZIP-ie instalacyjnym.
+
+
+## Wydanie 2.3.0 — ortofoto i kamera z oczu
+
+Wybór jednego źródła ortofotomapy (warstwa QGIS lub Geoportal online) zapobiega zasłanianiu jej przez NMT/NMPT. Renderer czeka na kafle sieciowe z `RenderBlocking` w zadaniu asynchronicznym; puste i jednolicie szare wyniki są raportowane. Geoportal jest pobierany w tle i dopasowywany do EPSG:2180. W HTML jest osobny komunikat stanu zdjęcia.
+
+**Z poziomu oczu:** wybierz miejsce na mapce w przeglądarce albo przyciskiem **Wskaż miejsce patrzenia w QGIS**. Kamera stoi na gruncie NMT + wysokość oka, domyślnie 1,7 m. Mysz rozgląda się, strzałki/WASD przesuwają, Shift zwiększa krok, kółko zmienia kąt widzenia. Dach/korona na wysokości oka i braki danych są zgłaszane. W tym trybie pion = 1:1. To model 2,5D z obrazem z góry, bez prawdziwych elewacji i prześwitów.
+
+Dla starego wyniku: **Wczytaj report.json → wybierz źródło ortofotomapy → Odśwież samą scenę 3D / ortofotomapę**. Używane są zapisane `terrain.tif` i `elevation.tif`, bez pobierania modeli i liczenia map widoczności. Zmiana kamery/oka w podglądzie nie przelicza analizy. Stare HTML-e wymagają odświeżenia/generacji — instalacja ZIP-a nie zmienia ich automatycznie.
+
+[Instrukcja 2.3.0](../docs/Instrukcja_ATLAS_2.3.0.md) zawiera dokładne kroki i ograniczenia. Pełna scena WebGL obsługuje ortofoto i kamerę z oczu; lekka wersja Canvas ich nie oferuje i ma teraz wyraźny odnośnik do pełnej sceny.
