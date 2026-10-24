@@ -129,6 +129,7 @@ class WorkspaceDialog(QDialog):
         self.report_dir = None
         self.atlas_layers = {}
         self.running_atlas = True
+        self.scene_dirty, self.open_after_scene_refresh, self.loading_scene_controls = False, False, False
         self.scene_only, self.scene_observer, self.point_tool, self.previous_map_tool = False, None, None, None
         self.setWindowTitle(PLUGIN_NAME + ' · Atlas widoczności ' + VERSION)
         self.resize(1130, 940)
@@ -281,6 +282,13 @@ class WorkspaceDialog(QDialog):
         self.refresh_scene_button.setEnabled(False)
         self.refresh_scene_button.clicked.connect(self.refresh_scene)
         detail_form.addRow(self.refresh_scene_button)
+        self.texture_state_label = QLabel('Wybierz zdjęcie. Po zmianie źródła przycisk Scena 3D przygotuje aktualny widok.')
+        self.texture_state_label.setWordWrap(True)
+        self.texture_preview_button = QPushButton('Pokaż wyeksportowane zdjęcie PNG')
+        self.texture_preview_button.setEnabled(False)
+        self.texture_preview_button.clicked.connect(self.preview_texture)
+        detail_form.addRow(self.texture_state_label)
+        detail_form.addRow(self.texture_preview_button)
         note = QLabel('Ortofotomapa Geoportal/WMS/WMTS wymaga sieci. Brak lub szare tło jest raportowane. Odświeżenie sceny nie zmienia map widoczności. W widoku z oczu wysokość liczona jest nad NMT; dachy i korony NMPT mogą zasłaniać widok.')
         note.setWordWrap(True)
         detail_form.addRow(note)
@@ -374,6 +382,66 @@ class WorkspaceDialog(QDialog):
             panel.enabled.toggled.connect(self.update_estimate)
         self.show_advanced(False)
         self.mode_changed()
+        self.texture_layer.layerChanged.connect(self.texture_layer_selected)
+        self.texture_mode.currentIndexChanged.connect(self.texture_mode_selected)
+        for widget, signal in [(self.scene_texture, 'toggled'), (self.scene_start_eye, 'toggled'),
+                               (self.scene_quality, 'currentIndexChanged'), (self.scene_radius, 'valueChanged'),
+                               (self.view_turbine, 'valueChanged'), (self.view_azimuth, 'valueChanged'), (self.eye, 'valueChanged')]:
+            getattr(widget, signal).connect(self.mark_scene_dirty)
+        for combo in self.scene_layers.values():
+            combo.layerChanged.connect(self.mark_scene_dirty)
+
+    def mark_scene_dirty(self, *args):
+        if self.loading_scene_controls:
+            return
+        self.scene_dirty = True
+        if self.last_report:
+            self.texture_state_label.setText('Zmieniono ustawienia. Scena 3D najpierw odświeży prezentację; mapy widoczności pozostaną bez zmian.')
+
+    def texture_layer_selected(self, layer):
+        if self.loading_scene_controls or layer is None:
+            return
+        self.texture_mode.setCurrentIndex(self.texture_mode.findData('layer'))
+        self.scene_texture.setChecked(True)
+        self.mark_scene_dirty()
+
+    def texture_mode_selected(self, *args):
+        if self.loading_scene_controls:
+            return
+        self.scene_texture.setChecked(True)
+        self.mark_scene_dirty()
+
+    def preferred_detail(self):
+        items = self.last_report.get('details', []) if self.last_report else []
+        return next((item for item in items if item['model'] == 'NMPT'), items[0] if items else None)
+
+    def update_texture_state(self):
+        detail = self.preferred_detail()
+        if not detail:
+            self.texture_preview_button.setEnabled(False)
+            return
+        path = Path(detail.get('texture') or (Path(self.report_dir) / ('tekstura_' + detail['model'] + '.png')))
+        self.texture_preview_button.setEnabled(path.is_file())
+        if self.last_report.get('scene_texture_error'):
+            self.texture_state_label.setText('Eksport zdjęcia nie powiódł się: ' + self.last_report['scene_texture_error'])
+            return
+        try:
+            text = Path(detail['scene']).read_text(encoding='utf-8')
+            embedded = 'const textureData="data:image/' in text or 'const textureData= "data:image/' in text
+        except OSError:
+            embedded = False
+        if embedded:
+            info = detail.get('texture_info', {})
+            self.texture_state_label.setText(f'Obraz jest dołączony do HTML. PNG: {info.get("width", "?")} × {info.get("height", "?")} px. Możesz sprawdzić go przyciskiem poniżej.')
+        else:
+            self.texture_state_label.setText('HTML nie zawiera ortofotomapy. Wybierz jej warstwę i kliknij Scena 3D — zdjęcie zostanie wyeksportowane.')
+
+    def preview_texture(self):
+        detail = self.preferred_detail()
+        if detail:
+            path = Path(detail.get('texture') or (Path(self.report_dir) / ('tekstura_' + detail['model'] + '.png')))
+            if path.is_file():
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     @staticmethod
     def pair(left, right):
@@ -495,6 +563,7 @@ class WorkspaceDialog(QDialog):
     def clear_scene_point(self):
         self.scene_observer = None
         self.update_scene_point_label()
+        self.mark_scene_dirty()
 
     def pick_scene_point(self):
         if self.task or self.export_job or self.point_tool:
@@ -537,6 +606,7 @@ class WorkspaceDialog(QDialog):
                 self.scene_observer = [projected.x(), projected.y()]
                 self.scene_start_eye.setChecked(True)
                 self.update_scene_point_label()
+                self.mark_scene_dirty()
             except Exception as exc:
                 QMessageBox.warning(self, PLUGIN_NAME, 'Nie można wskazać miejsca. Sprawdź CRS mapy. ' + str(exc))
         self.stop_scene_picker()
@@ -545,6 +615,7 @@ class WorkspaceDialog(QDialog):
         if self.task or self.export_job:
             return
         self.scene_only = False
+        self.open_after_scene_refresh = False
         try:
             layer, options, contexts = self.options()
             self.running_atlas = self.mode.currentIndex() == 0
@@ -735,6 +806,8 @@ class WorkspaceDialog(QDialog):
         self.complete(self.last_report)
 
     def complete(self, report):
+        auto_open = self.open_after_scene_refresh and self.scene_only
+        self.open_after_scene_refresh = False
         if self.report_dir:
             from .core import atomic_json
             try:
@@ -769,10 +842,17 @@ class WorkspaceDialog(QDialog):
         self.inputs.setEnabled(True)
         self.load_button.setEnabled(True)
         self.start_button.setEnabled(True)
+        self.scene_dirty = bool(report.get('presentation_error'))
+        self.update_texture_state()
         if report['state'] == 'completed' and not report.get('presentation_error') and not report.get('scene_texture_error'):
-            QMessageBox.information(self, PLUGIN_NAME, text)
+            if not auto_open:
+                QMessageBox.information(self, PLUGIN_NAME, text)
         else:
             QMessageBox.warning(self, PLUGIN_NAME, text)
+        if auto_open and not report.get('presentation_error') and not report.get('scene_texture_error'):
+            detail = self.preferred_detail()
+            if detail:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(detail['scene']))
 
     def cancel(self):
         if self.export_job:
@@ -799,6 +879,16 @@ class WorkspaceDialog(QDialog):
         self.iface.mapCanvas().refresh()
 
     def open_detail(self, kind):
+        if self.task or self.export_job:
+            return
+        if kind == 'scene' and self.last_report:
+            generated_version = self.last_report.get('scene_version', self.last_report.get('version'))
+            detail = self.preferred_detail()
+            missing_texture = self.scene_texture.isChecked() and detail and not detail.get('texture') and not self.last_report.get('scene_texture_error')
+            if self.scene_dirty or generated_version != VERSION or missing_texture:
+                self.open_after_scene_refresh = True
+                self.refresh_scene()
+                return
         if self.last_report and self.last_report.get('details'):
             items = self.last_report['details']
             preferred = next((item for item in items if item['model'] == 'NMPT'), items[0])
@@ -818,6 +908,7 @@ class WorkspaceDialog(QDialog):
         if not filename:
             return
         try:
+            self.loading_scene_controls = True
             path = Path(filename)
             report = json.loads(path.read_text(encoding='utf-8'))
             if not report.get('products') or not report.get('turbines') or not report.get('options', {}).get('models'):
@@ -894,9 +985,13 @@ class WorkspaceDialog(QDialog):
             self.ray_button.setEnabled(bool(report.get('rays_gpkg')))
             self.profile_button.setEnabled(bool(report.get('details')))
             self.scene_button.setEnabled(bool(report.get('details')))
+            self.scene_dirty = False
+            self.update_texture_state()
             self.stage.setText('Wczytano poprzedni zestaw. Zmień parametry i kliknij Przelicz ponownie. Pola piasta_m / srednica_m zachowują wysokości; puste pola oznaczają stałe wartości.')
         except Exception as exc:
             QMessageBox.warning(self, PLUGIN_NAME, 'Nie można odtworzyć atlasu: ' + str(exc))
+        finally:
+            self.loading_scene_controls = False
 
     def show_result(self):
         try:

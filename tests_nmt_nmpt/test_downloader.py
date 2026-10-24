@@ -1523,6 +1523,89 @@ class AtlasTests(unittest.TestCase):
             view.deleteLater()
             canvas.deleteLater()
 
+    def test_selecting_orthophoto_and_opening_scene_refreshes_html_without_analysis(self):
+        import hashlib
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from qgis.core import QgsRasterLayer
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        report = self.engine().run()
+        paths = [Path(p['paths'][name]) for p in report['products'] for name in ['count', 'quality', 'hub']]
+        before = [hashlib.sha256(path.read_bytes()).hexdigest() for path in paths]
+        photo_path = self.root / 'test_ortofoto.tif'
+        ds = gdal.GetDriverByName('GTiff').Create(str(photo_path), 201, 201, 3, gdal.GDT_Byte)
+        ds.SetGeoTransform((0, 1, 0, 201, 0, -1))
+        ds.SetProjection(QgsCoordinateReferenceSystem('EPSG:2180').toWkt())
+        for index, value in enumerate([210, 50, 30], 1):
+            band = ds.GetRasterBand(index)
+            band.Fill(value)
+            band.SetColorInterpretation([gdal.GCI_RedBand, gdal.GCI_GreenBand, gdal.GCI_BlueBand][index-1])
+        band, ds = None, None
+        ortho = QgsRasterLayer(str(photo_path), 'Lokalne ortofoto', 'gdal')
+        QgsProject.instance().addMapLayer(ortho)
+        window = QMainWindow()
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+        view = WorkspaceDialog(Iface())
+        try:
+            with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning') as warning:
+                view.load_report(str(Path(report['report_dir']) / 'report.json'))
+                self.assertFalse(view.scene_texture.isChecked(), 'Restoring a texture-free report must preserve that choice')
+                view.texture_layer.setLayer(None)
+                view.texture_layer.setLayer(ortho)
+                self.assertTrue(view.scene_texture.isChecked())
+                self.assertEqual(view.texture_mode.currentData(), 'layer')
+                self.assertTrue(view.scene_dirty)
+                with patch('nmt_nmpt_downloader.atlas.AtlasEngine.run') as analysis, patch('nmt_nmpt_downloader.workspace_dialog.QDesktopServices.openUrl') as opened:
+                    view.open_detail('scene')
+                    self.assertFalse(opened.called, 'The old HTML must not be opened before the update finishes')
+                    DownloaderTests.wait_until(self, lambda: view.task is None and view.export_job is None, 15000)
+                    analysis.assert_not_called()
+                    self.assertEqual(opened.call_count, 1)
+                    detail = view.preferred_detail()
+                    self.assertEqual(opened.call_args.args[0].toLocalFile(), detail['scene'])
+                    self.assertIn('data:image/png;base64,', Path(detail['scene']).read_text())
+                    self.assertEqual(detail['texture_layers'], [ortho.name()])
+                    self.assertTrue(view.texture_preview_button.isEnabled())
+                    self.assertIn('dołączony do HTML', view.texture_state_label.text())
+                    self.assertFalse(view.scene_dirty)
+                    opened.reset_mock()
+                    view.open_detail('scene')
+                    self.assertEqual(opened.call_count, 1, 'Unchanged settings must open the prepared scene immediately')
+                    view.preview_texture()
+                    self.assertEqual(opened.call_args.args[0].toLocalFile(), detail['texture'])
+                self.assertFalse(warning.called, warning.call_args)
+            self.assertEqual(before, [hashlib.sha256(path.read_bytes()).hexdigest() for path in paths])
+        finally:
+            view.deleteLater()
+
+    def test_scene_without_selected_image_reports_export_failure_and_does_not_open_old_html(self):
+        from qgis.PyQt.QtWidgets import QMainWindow
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        report = self.engine().run()
+        window = QMainWindow()
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+        view = WorkspaceDialog(Iface())
+        try:
+            with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning') as warning, patch('nmt_nmpt_downloader.workspace_dialog.QDesktopServices.openUrl') as opened:
+                view.load_report(str(Path(report['report_dir']) / 'report.json'))
+                view.texture_mode.setCurrentIndex(view.texture_mode.findData('layer'))
+                view.texture_layer.setLayer(None)
+                view.open_detail('scene')
+                DownloaderTests.wait_until(self, lambda: view.task is None and view.export_job is None, 15000)
+                self.assertTrue(warning.called)
+                self.assertFalse(opened.called)
+                self.assertIn('Nie wybrano ortofotomapy', view.last_report['scene_texture_error'])
+                self.assertIn('nie powiódł się', view.texture_state_label.text())
+                self.assertFalse(view.texture_preview_button.isEnabled())
+                self.assertTrue(view.scene_button.isEnabled(), 'An export error must leave the analysis usable')
+        finally:
+            view.deleteLater()
+
     def test_unified_ui_observers_empty_and_one_menu_action(self):
         from qgis.PyQt.QtWidgets import QMainWindow
         from qgis.gui import QgsMapCanvas

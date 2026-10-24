@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.3.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.3.1
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.3.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.3.1.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -76,6 +76,12 @@ Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_N
 
 [Dokładna instrukcja i omówienie inspiracji z PDF](../docs/Instrukcja_ATLAS_2.2.0.md). Nowe pliki wyniku: `raport.gpkg`, `scena_3d_lekka_*.html` i opcjonalnie `tekstura_*.png`. Szczegółowa scena zawiera obraz w sobie. Modeli, cache i raportów użytkownika nie ma w ZIP-ie instalacyjnym.
 
+
+## Wydanie 2.3.1 — aktualny HTML po wyborze zdjęcia
+
+Wybór warstwy rastrowej włącza nakładanie zdjęcia i wybiera tryb pojedynczej warstwy. Po zmianie ustawień **Scena 3D** najpierw odświeża prezentację z zapisanych modeli, a dopiero potem otwiera HTML. Nie przelicza widoczności. Przy odczycie raportu zachowywane są zapisane opcje; obrazu nie włączamy wbrew wcześniejszemu wyborowi użytkownika. Zaktualizowany formularz pozwala osobno otworzyć wyeksportowane PNG i pokazuje, czy obraz jest osadzony w HTML.
+
+W HTML można pobrać zdjęcie PNG. Jego podgląd na mapce pozostaje dostępny także przy błędzie przesłania do WebGL. Duże obrazy są dopasowywane do limitu tekstury karty graficznej; błędy eksportu, dekodowania i nakładania mają osobne komunikaty. Szczegóły: [instrukcja 2.3.1](../docs/Instrukcja_ATLAS_2.3.1.md).
 
 ## Wydanie 2.3.0 — ortofoto i kamera z oczu
 

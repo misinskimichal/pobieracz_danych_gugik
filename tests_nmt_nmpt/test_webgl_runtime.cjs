@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const constants=['TEXTURE_2D','RGBA','UNSIGNED_BYTE','TEXTURE_MIN_FILTER','TEXTURE_MAG_FILTER','LINEAR','TEXTURE_WRAP_S','TEXTURE_WRAP_T','CLAMP_TO_EDGE','ARRAY_BUFFER','ELEMENT_ARRAY_BUFFER','STATIC_DRAW','TRIANGLES','LINES','FLOAT','UNSIGNED_SHORT','VERTEX_SHADER','FRAGMENT_SHADER','COMPILE_STATUS','LINK_STATUS','UNPACK_FLIP_Y_WEBGL','DEPTH_TEST','POLYGON_OFFSET_FILL','COLOR_BUFFER_BIT','DEPTH_BUFFER_BIT'];
-let id=0,bound={},buffers={},matrix=null,draws=[],depth=false;
+const constants=['TEXTURE_2D','RGBA','UNSIGNED_BYTE','TEXTURE_MIN_FILTER','TEXTURE_MAG_FILTER','LINEAR','TEXTURE_WRAP_S','TEXTURE_WRAP_T','CLAMP_TO_EDGE','ARRAY_BUFFER','ELEMENT_ARRAY_BUFFER','STATIC_DRAW','TRIANGLES','LINES','FLOAT','UNSIGNED_SHORT','VERTEX_SHADER','FRAGMENT_SHADER','COMPILE_STATUS','LINK_STATUS','UNPACK_FLIP_Y_WEBGL','DEPTH_TEST','POLYGON_OFFSET_FILL','COLOR_BUFFER_BIT','DEPTH_BUFFER_BIT','MAX_TEXTURE_SIZE'];
+let id=0,bound={},buffers={},matrix=null,draws=[],depth=false,gpuError=0,failUpload=false,uploadedTexture=null,locatorPhotos=0;
 const methods={};constants.forEach((key,i)=>methods[key]=i+1);
 Object.assign(methods,{
  createBuffer:()=>++id,createShader:()=>++id,createProgram:()=>++id,createTexture:()=>++id,
@@ -14,14 +14,16 @@ Object.assign(methods,{
  enable:what=>{if(what===methods.DEPTH_TEST)depth=true},disable:what=>{if(what===methods.DEPTH_TEST)depth=false},
 });
 const gl=new Proxy(methods,{get:(target,name)=>name in target?target[name]:()=>{}}),elements={},frames=[];
-methods.NO_ERROR=0;methods.getError=()=>0;
-const ids=['title','info','profile','fallback','bearing','tilt','vertical','sun','projection','fov','material','cover','trees','lines','texture-option','status','view','low','high','bval','tval','vval','fval','reset','save','camera','eye-height','locator','eye-status','texture-status','look-turbine','bearing-label'];
-for(const key of ids)elements[key]={value:{tilt:28,vertical:1,sun:300,projection:'perspective',fov:45,material:'height'}[key]??225,checked:true,handlers:{},addEventListener(name,cb){this.handlers[name]=cb}};
+methods.NO_ERROR=0;methods.getError=()=>{const value=gpuError;gpuError=0;return value};
+methods.getParameter=key=>key===methods.MAX_TEXTURE_SIZE?2048:undefined;
+methods.texImage2D=(...args)=>{if(args.length===6){uploadedTexture=args[5];gpuError=failUpload?1285:0}};
+const ids=['title','info','profile','fallback','bearing','tilt','vertical','sun','projection','fov','material','cover','trees','lines','texture-option','status','view','low','high','bval','tval','vval','fval','reset','save','camera','eye-height','locator','eye-status','texture-status','look-turbine','bearing-label','download-texture'];
+for(const key of ids)elements[key]={value:{tilt:28,vertical:1,sun:300,projection:'perspective',fov:45,material:'height'}[key]??225,checked:true,style:{display:'none'},handlers:{},addEventListener(name,cb){this.handlers[name]=cb}};
 Object.assign(elements.view,{clientWidth:1600,clientHeight:1000,getContext:()=>gl,setPointerCapture(){}});
-Object.assign(elements.locator,{width:320,height:320,getContext:()=>new Proxy({},{get:()=>()=>{},set:()=>true}),getBoundingClientRect:()=>({left:0,top:0,width:320,height:320})});
+Object.assign(elements.locator,{width:320,height:320,getContext:()=>new Proxy({drawImage(){locatorPhotos++}},{get:(target,key)=>target[key]||(()=>{}),set:()=>true}),getBoundingClientRect:()=>({left:0,top:0,width:320,height:320})});
 const payload=process.argv[2]?JSON.parse(fs.readFileSync(process.argv[2],'utf8')):{resource:'NMPT',turbine:'demo',radius:100,profile_radius:100,step_m:50,analysis_step_m:1,azimuth:225,x:[-50,0,50],y:[50,0,-50],ground:[[90,100,null],[90,100,110],[90,95,100]],surface:[[90,115,null],[90,105,110],[90,95,100]],forest:[[0,1,0],[0,1,0],[0,0,0]],trees:[{x:0,y:0,ground:100,height:15}],ground_z:100,hub:30,diameter:20,eye:91.7,observer:[-70,-70],status:['widoczna','widoczna','widoczna']};
-const images=[];class TestImage{constructor(){images.push(this)}set src(value){this.source=value}}
-const context={console,document:{getElementById:key=>elements[key]},window:{devicePixelRatio:1,addEventListener(){}},requestAnimationFrame:cb=>frames.push(cb),scene:payload,textureData:'data:image/png;base64,fixture',Image:TestImage};
+const images=[];class TestImage{constructor(){images.push(this);this.naturalWidth=4096;this.naturalHeight=2048}set src(value){this.source=value}}
+const context={console,document:{getElementById:key=>elements[key],createElement:key=>{assert.equal(key,'canvas');return {getContext:()=>({drawImage(){}})}}},window:{devicePixelRatio:1,addEventListener(){}},requestAnimationFrame:cb=>frames.push(cb),scene:payload,textureData:'data:image/png;base64,fixture',Image:TestImage};
 vm.runInNewContext(fs.readFileSync('nmt_nmpt_downloader/scene_webgl.js','utf8'),context);frames.shift()();
 assert(elements.status.textContent.startsWith('Gotowe'),elements.status.textContent);
 if(elements.camera.value==='eye'){assert.equal(+elements.vertical.value,1);elements.reset.onclick();frames.shift()();elements.lines.checked=true;elements.lines.handlers.input();frames.shift()()}
@@ -44,6 +46,11 @@ if(!process.argv[2]){elements.locator.handlers.pointerdown({clientX:32,clientY:2
 elements.reset.onclick();frames.shift()();
 images[0].onerror();assert(elements['texture-status'].textContent.includes('Nie można'));
 images[0].onload();frames.shift()();assert.equal(elements.material.value,'texture');assert.equal(elements['texture-option'].disabled,false);assert(elements['texture-status'].textContent.includes('wczytana'));
+assert.equal(uploadedTexture.width,2048);assert.equal(uploadedTexture.height,1024,'Large image must fit the GPU limit while keeping its proportions');
+assert.equal(elements['download-texture'].href,context.textureData);assert.equal(elements['download-texture'].style.display,'');
+assert(locatorPhotos>0,'Decoded image must also appear in the location picker');
+images[0].naturalWidth=512;images[0].naturalHeight=512;gpuError=1280;images[0].onload();frames.shift()();
+assert.equal(uploadedTexture,images[0]);assert.equal(elements['texture-option'].disabled,false,'An earlier drawing error must not be attributed to image upload');
 // Optional exact GPU replay data for development-only verification of a synthetic scene.
 if(process.argv[3]){
  elements.cover.checked=true;elements.material.value='texture';elements.cover.handlers.input();draws=[];frames.shift()();
@@ -52,4 +59,8 @@ if(process.argv[3]){
  for(const key of used)fs.writeFileSync(`${out}/buffer_${key}.bin`,Buffer.from(buffers[key].buffer,buffers[key].byteOffset,buffers[key].byteLength));
  fs.writeFileSync(`${out}/frame.json`,JSON.stringify({matrix,draws,methods,vertical:+elements.vertical.value,texture:payload.texture_bounds,radius:payload.radius,camera:elements.camera.value,eye_info:elements['eye-status'].textContent,material:elements.material.value}));
 }
-console.log('PASS: WebGL runtime, finite buffers, tree/turbine geometry, depth test, camera, FOV, materials and terrain toggle');
+failUpload=true;const photosBefore=locatorPhotos;images[0].onload();frames.shift()();
+assert.equal(elements['texture-option'].disabled,true);assert(elements['texture-status'].textContent.includes('1285'));
+assert(locatorPhotos>photosBefore,'A failed GPU upload must preserve the photo on the location picker');
+assert.equal(elements['download-texture'].href,context.textureData);
+console.log('PASS: WebGL runtime, geometry, camera, photo download, device texture limit, stale GL errors and GPU failure diagnostics');

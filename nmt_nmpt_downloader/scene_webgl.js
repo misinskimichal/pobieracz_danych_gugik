@@ -93,7 +93,21 @@ function startScene(s,textureUrl) {
   const texture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,texture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([255,255,255,255]));
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-  if(textureUrl){const image=new Image();image.onload=()=>{try{gl.bindTexture(gl.TEXTURE_2D,texture);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image);if(gl.getError()!==gl.NO_ERROR)throw Error('karta graficzna odrzuciła teksturę');textureReady=true;textureImage=image;$('texture-option').disabled=false;$('material').value='texture';$('texture-status').textContent='Ortofotomapa wczytana. Kliknij na mapce, aby wybrać miejsce patrzenia.';dirty=true;schedule()}catch(error){$('texture-status').textContent='Nie udało się nałożyć ortofotomapy: '+error.message}};image.onerror=()=>{$('texture-status').textContent='Nie można odczytać osadzonej ortofotomapy. Odśwież scenę w QGIS i sprawdź źródło.'};image.src=textureUrl}
+  if(textureUrl){const image=new Image();image.onload=()=>{
+    textureImage=image;const download=$('download-texture');download.href=textureUrl;download.download=`tekstura_${s.resource}.png`;download.style.display='';schedule();
+    try{
+      if(gl.isContextLost&&gl.isContextLost())throw Error('utracono kontekst graficzny');
+      // Earlier draw errors must not be misreported as an image upload error.
+      for(let i=0;i<8&&gl.getError()!==gl.NO_ERROR;i++){}
+      const width=image.naturalWidth||image.width,height=image.naturalHeight||image.height;
+      const maximum=Number(gl.getParameter(gl.MAX_TEXTURE_SIZE))||2048;let input=image;
+      if(width>maximum||height>maximum){const factor=Math.min(maximum/width,maximum/height),resized=document.createElement('canvas');resized.width=Math.max(1,Math.floor(width*factor));resized.height=Math.max(1,Math.floor(height*factor));resized.getContext('2d').drawImage(image,0,0,resized.width,resized.height);input=resized}
+      gl.bindTexture(gl.TEXTURE_2D,texture);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,input);
+      const error=gl.getError();if(error!==gl.NO_ERROR)throw Error(`błąd karty graficznej ${error}`);
+      textureReady=true;$('texture-option').disabled=false;dirty=dirty||$('material').value==='cover';$('material').value='texture';
+      $('texture-status').textContent=`Ortofotomapa ${width||'?'} × ${height||'?'} wczytana. Kliknij na mapce, aby wybrać miejsce patrzenia.`;schedule();
+    }catch(error){textureReady=false;$('texture-option').disabled=true;$('texture-status').textContent='Zdjęcie jest w HTML i na mapce, ale nie udało się nałożyć go w 3D: '+error.message+'. Możesz pobrać PNG przyciskiem powyżej.';schedule()}
+  };image.onerror=()=>{$('texture-status').textContent='Nie można odczytać osadzonej ortofotomapy. Odśwież scenę w QGIS i sprawdź źródło.'};image.src=textureUrl}
   function drawLocator(){
     if(!locatorCtx)return;
     const b=s.texture_bounds||[s.x[0],s.y[s.y.length-1],s.x[s.x.length-1],s.y[0]],w=locator.width,h=locator.height;

@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.3.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.3.1; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -13,6 +13,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Wydanie 2.2.0:** gęstsze WebGL, opcjonalna tekstura mapy i warstwy BDOT, raport w panelu warstw oraz odtwarzanie i ponowne przeliczanie na lokalnych modelach — [instrukcja 2.2.0 i omówienie PDF](Instrukcja_ATLAS_2.2.0.md).
 
 **Wydanie 2.3.0:** poprawiony wybór i oczekiwanie na ortofotomapę, kamera z poziomu oczu, wskazywanie miejsca w QGIS lub na mapce oraz odświeżanie samej sceny z zapisanych modeli — [instrukcja 2.3.0](Instrukcja_ATLAS_2.3.0.md).
+
+**Wydanie 2.3.1:** aktualizacja HTML przed otwarciem po zmianie zdjęcia, osobny podgląd PNG i diagnostyka tekstury WebGL — [instrukcja 2.3.1](Instrukcja_ATLAS_2.3.1.md).
 
 ## Spis treści
 
@@ -1730,3 +1732,10 @@ Zweryfikowano 68 testów Python/QGIS oraz testy geometrii i sterowania JavaScrip
 Kamerę ustawia kliknięcie mapki sceny albo punkt wskazany w QGIS. Wysokość jest liczona z NMT i podanego oka, z tym samym trójkątem co renderowany teren. Pion = 1:1, rzut perspektywiczny, obrót z miejsca i ruch klawiszami. Brak gruntu lub oko pod powierzchnią dachu/korony jest komunikowane. Miejsce w przeglądarce nie zastępuje obserwatora zapisanego przekroju i nie zmienia rastrów analizy.
 
 `scene_refresh.py` odczytuje modele prezentacji z zakończonego atlasu, odtwarza sceny i zapisuje `scene_view_options`. Nie wykonuje pobierania ani `ViewshedGenerate`. Testy hashów potwierdzają zachowanie rastrów liczby turbin i jakości. Odświeżenie starego HTML wymaga użycia nowego przycisku; sam ZIP nie przebudowuje dawnych plików.
+
+
+## Suplement K — wdrożone w 2.3.1: aktualizacja HTML i diagnostyka tekstury
+
+Po zmianie ustawień sceny przycisk **Scena 3D** odświeża zapisany HTML przed jego otwarciem. Wybór warstwy rastrowej wybiera tryb pojedynczej warstwy i włącza zdjęcie. Odczyt zapisanego raportu zachowuje wcześniejsze ustawienia. Osobny podgląd PNG pozwala sprawdzić eksport bez przeglądarki. Błąd eksportu jest zgłaszany przed automatycznym otwarciem, a gotowe wyniki analizy pozostają dostępne.
+
+W HTML obraz jest dostępny na mapce i do pobrania niezależnie od powodzenia jego przesłania do WebGL. Tekstura jest zmniejszana do limitu urządzenia, a błędy jej dekodowania i nakładania mają odrębne komunikaty. Nie oznacza to rozpoznania przyczyny każdego szarego tła u użytkownika; rozdziela etapy diagnostyki. Aktualizowanie ustawień nadal odbywa się w formularzu; akcje panelu warstw otwierają zapisane pliki. Zmiana kamery nie przelicza widoczności. Pełny opis i weryfikację zawiera [instrukcja 2.3.1](Instrukcja_ATLAS_2.3.1.md).
