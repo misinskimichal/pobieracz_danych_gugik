@@ -279,6 +279,17 @@ class WorkspaceDialog(QDialog):
         self.texture_layer.setEnabled(candidate is not None)
         detail_form.addRow('Źródło ortofotomapy:', self.texture_mode)
         detail_form.addRow('Warstwa zdjęcia (bez NMT/NMPT nad nim):', self.texture_layer)
+        self.texture_resolution = QComboBox()
+        for title, value in [('Bardzo szczegółowa · cel 0,10 m/px', .1), ('Szczegółowa · cel 0,25 m/px', .25),
+                             ('Średnia · cel 0,50 m/px', .5), ('Lekka · cel 1 m/px', 1.)]:
+            self.texture_resolution.addItem(title, value)
+        self.texture_resolution.setCurrentIndex(1)
+        detail_form.addRow('Zdjęcie WMS → lokalne kafle (do 64):', self.texture_resolution)
+        self.forest_trees = QComboBox()
+        for value in (2000, 5000, 10000):
+            self.forest_trees.addItem(str(value), value)
+        self.forest_trees.setCurrentIndex(1)
+        detail_form.addRow('Limit ilustracyjnych koron lasów:', self.forest_trees)
         self.refresh_scene_button = QPushButton('Odśwież samą scenę 3D / ortofotomapę · bez przeliczania widoczności')
         self.refresh_scene_button.setEnabled(False)
         self.refresh_scene_button.clicked.connect(self.refresh_scene)
@@ -290,6 +301,10 @@ class WorkspaceDialog(QDialog):
         self.texture_preview_button.clicked.connect(self.preview_texture)
         detail_form.addRow(self.texture_state_label)
         detail_form.addRow(self.texture_preview_button)
+        self.local_photo_button = QPushButton('Dodaj pobraną ortofotomapę do QGIS')
+        self.local_photo_button.setEnabled(False)
+        self.local_photo_button.clicked.connect(self.add_local_photo)
+        detail_form.addRow(self.local_photo_button)
         note = QLabel('Ortofotomapa Geoportal/WMS/WMTS wymaga sieci. Brak lub szare tło jest raportowane. Odświeżenie sceny nie zmienia map widoczności. W widoku z oczu wysokość liczona jest nad NMT; dachy i korony NMPT mogą zasłaniać widok.')
         note.setWordWrap(True)
         detail_form.addRow(note)
@@ -391,6 +406,8 @@ class WorkspaceDialog(QDialog):
             getattr(widget, signal).connect(self.mark_scene_dirty)
         for combo in self.scene_layers.values():
             combo.layerChanged.connect(self.mark_scene_dirty)
+        self.texture_resolution.currentIndexChanged.connect(self.mark_scene_dirty)
+        self.forest_trees.currentIndexChanged.connect(self.mark_scene_dirty)
 
     def mark_scene_dirty(self, *args):
         if self.loading_scene_controls:
@@ -420,7 +437,9 @@ class WorkspaceDialog(QDialog):
         detail = self.preferred_detail()
         if not detail:
             self.texture_preview_button.setEnabled(False)
+            self.local_photo_button.setEnabled(False)
             return
+        self.local_photo_button.setEnabled(bool(detail.get('texture_vrt') and Path(detail['texture_vrt']).is_file()))
         path = Path(detail.get('texture') or (Path(self.report_dir) / ('tekstura_' + detail['model'] + '.png')))
         self.texture_preview_button.setEnabled(path.is_file())
         if self.last_report.get('scene_texture_error'):
@@ -433,7 +452,8 @@ class WorkspaceDialog(QDialog):
             embedded = False
         if embedded:
             info = detail.get('texture_info', {})
-            self.texture_state_label.setText(f'Obraz jest dołączony do HTML. PNG: {info.get("width", "?")} × {info.get("height", "?")} px. Możesz sprawdzić go przyciskiem poniżej.')
+            self.texture_state_label.setText(f'Obraz jest dołączony do HTML. Podgląd PNG: {info.get("width", "?")} × {info.get("height", "?")} px. ' +
+                                             (f'Lokalne zdjęcie: {info["mosaic_width"]} × {info["mosaic_height"]} px, około {info["effective_resolution_m"]} m/px; {info["tiles"]} kafli.' if info.get('tiles') else ''))
         else:
             self.texture_state_label.setText('HTML nie zawiera ortofotomapy. Wybierz jej warstwę i kliknij Scena 3D — zdjęcie zostanie wyeksportowane.')
 
@@ -443,6 +463,16 @@ class WorkspaceDialog(QDialog):
             path = Path(detail.get('texture') or (Path(self.report_dir) / ('tekstura_' + detail['model'] + '.png')))
             if path.is_file():
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def add_local_photo(self):
+        from qgis.core import QgsRasterLayer
+        detail = self.preferred_detail()
+        if detail and detail.get('texture_vrt'):
+            layer = QgsRasterLayer(detail['texture_vrt'], 'Ortofotomapa lokalna · ' + detail['model'], 'gdal')
+            if layer.isValid():
+                QgsProject.instance().addMapLayer(layer)
+            else:
+                QMessageBox.warning(self, PLUGIN_NAME, 'Nie można odczytać lokalnej ortofotomapy. Zachowaj folder kafli razem z plikiem VRT.')
 
     @staticmethod
     def pair(left, right):
@@ -556,6 +586,7 @@ class WorkspaceDialog(QDialog):
                     scene_eye=self.eye.value(), scene_start_eye=self.scene_start_eye.isChecked(), scene_observer=self.scene_observer,
                     scene_context_layer_ids={role: combo.currentLayer().id() for role, combo in self.scene_layers.items() if combo.currentLayer()},
                     scene_texture=self.scene_texture.isChecked(), scene_texture_mode=self.texture_mode.currentData(),
+                    scene_texture_resolution=self.texture_resolution.currentData(), scene_forest_trees=self.forest_trees.currentData(),
                     scene_texture_layer_id=self.texture_layer.currentLayer().id() if self.texture_layer.currentLayer() else '')
 
     def update_scene_point_label(self):
@@ -787,6 +818,11 @@ class WorkspaceDialog(QDialog):
             if result.get('error'):
                 self.last_report['scene_texture_error'] = result['error']
                 self.log.appendPlainText('Tekstura 3D: ' + result['error'])
+            warnings = [f'{item["model"]}: brak {len(item["texture_tile_errors"])} kafli zdjęcia; szczegóły w report.json.'
+                        for item in self.last_report.get('details', []) if item.get('texture_tile_errors')]
+            self.last_report['scene_texture_warnings'] = warnings
+            for warning in warnings:
+                self.log.appendPlainText(warning)
             if self.scene_only:
                 self.finish_scene_view()
             elif self.export_after.isChecked():
@@ -834,11 +870,15 @@ class WorkspaceDialog(QDialog):
             text += '\nProblem prezentacji: ' + report['presentation_error']
         if report.get('scene_texture_error'):
             text += '\nOrtofotomapa: ' + report['scene_texture_error']
+        if report.get('scene_texture_warnings'):
+            text += '\n' + '\n'.join(report['scene_texture_warnings'])
         if self.scene_only:
             text = ('Nie ukończono odświeżenia sceny.' if report.get('presentation_error') else
                     'Odświeżono scenę 3D; mapy widoczności pozostają z poprzednich obliczeń.') + (
                 '\nOrtofotomapa: ' + report['scene_texture_error'] if report.get('scene_texture_error') else '') + (
                 '\n' + report['presentation_error'] if report.get('presentation_error') else '')
+            if report.get('scene_texture_warnings'):
+                text += '\n' + '\n'.join(report['scene_texture_warnings'])
         self.stage.setText(text)
         self.log.appendPlainText(text)
         self.inputs.setEnabled(True)
@@ -948,6 +988,8 @@ class WorkspaceDialog(QDialog):
                     widget.setValue(values[key])
             self.eye.setValue(view.get('scene_eye', opts.get('eye', 1.7)))
             self.scene_quality.setCurrentIndex(max(0, self.scene_quality.findData(view.get('scene_vertices', 513))))
+            self.texture_resolution.setCurrentIndex(max(0, self.texture_resolution.findData(view.get('scene_texture_resolution', .25))))
+            self.forest_trees.setCurrentIndex(max(0, self.forest_trees.findData(view.get('scene_forest_trees', 5000))))
             self.scene_observer = view.get('scene_observer')
             self.scene_start_eye.setChecked(bool(view.get('scene_start_eye', True)))
             self.texture_mode.setCurrentIndex(max(0, self.texture_mode.findData(view.get('scene_texture_mode', 'geoportal'))))
@@ -974,9 +1016,13 @@ class WorkspaceDialog(QDialog):
                     if local.is_file():
                         product['paths'][key] = str(local)
             for detail in report.get('details', []):
-                for key in ['profile', 'scene', 'fallback_scene', 'texture']:
+                for key in ['profile', 'scene', 'fallback_scene', 'texture', 'texture_vrt']:
                     if detail.get(key) and (path.parent / Path(detail[key]).name).is_file():
                         detail[key] = str(path.parent / Path(detail[key]).name)
+                for tile in detail.get('texture_tiles', []):
+                    local = path.parent / ('ortofoto_' + detail['model']) / Path(tile['path']).name
+                    if local.is_file():
+                        tile['path'] = str(local)
             if (path.parent / 'atlas.html').is_file():
                 report.setdefault('presentation', {})['html'] = str(path.parent / 'atlas.html')
             self.last_report, self.report_dir, self.running_atlas = report, str(path.parent), True

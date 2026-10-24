@@ -2,9 +2,9 @@
 name=NMT i NMTP ściągacz
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
-version=2.4.0
+version=2.5.0
 author=Projekt lokalny
-description=Atlas NMT/NMPT, niezależna ortofotomapa 3D, uproszczone bryły budynków z obrysów, korony z warstwy lasów i kamera z poziomu oczu.
+description=Atlas NMT/NMPT, WMS do lokalnych kafli ortofoto i 3D, korony lasów bez zasłaniającej powierzchni, bryły budynków i kamera z poziomu oczu.
 about=Jeden formularz pobierania i analizy. Osobne promienie i kroki NMT/NMPT. Obserwatorzy opcjonalni. Mapy liczby widocznych turbin, trzech wysokości wirnika i braków danych, GeoTIFF/GeoPackage/CSV/JSON, atlas PDF/PNG/HTML.
 category=Raster
 icon=icon.svg

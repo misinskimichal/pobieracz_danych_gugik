@@ -12,9 +12,13 @@
 <label>Kąt widzenia <input id="fov" type="range" min="15" max="90" value="45"><output id="fval"></output></label>
 <label><input id="photo" type="checkbox" disabled>Ortofotomapa na modelu</label>
 <button id="show-photo" disabled>Pokaż ortofotomapę</button>
+<button id="photo-top">Zdjęcie z góry</button>
+<label><input id="photo-shade" type="checkbox">Cieniuj zdjęcie</label>
+<button id="diagnostics">Zapisz diagnostykę widoku</button>
 <label>Kolory pod zdjęciem <select id="material"><option value="height">Wysokość</option><option value="cover">Pokrycie / BDOT</option></select></label>
 <label><input id="cover" type="checkbox" checked>Powierzchnia NMPT</label>
 <label><input id="trees" type="checkbox" checked>Symbole drzew</label>
+<label><input id="forest-objects" type="checkbox">Pokaż korony zamiast powierzchni lasu</label>
 <label><input id="buildings" type="checkbox" checked>Bryły budynków</label>
 <button id="object-view" disabled title="Podgląd uproszczonych obiektów na gruncie; nie przelicza widoczności">NMT + obiekty BDOT</button>
 <label><input id="lines" type="checkbox" checked>Linie przekroju</label>
@@ -36,5 +40,7 @@ To powierzchnia 2,5D oglądana w 3D. Podgląd może mieć rzadszą siatkę niż 
 'use strict';
 const scene=/*SCENE_DATA*/;
 const textureData=/*SCENE_TEXTURE*/null;
+const textureTiles=/*SCENE_TEXTURE_TILES*/[];
+const textureTileIssues=/*SCENE_TEXTURE_ISSUES*/[];
 /*SCENE_RENDERER*/
 </script></html>

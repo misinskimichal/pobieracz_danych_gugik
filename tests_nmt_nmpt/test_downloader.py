@@ -1329,6 +1329,72 @@ class AtlasTests(unittest.TestCase):
             view.deleteLater()
             restored.deleteLater()
 
+    def test_forest_preview_limit_is_configurable_and_reports_truncation(self):
+        from nmt_nmpt_downloader.atlas import Grid
+        from nmt_nmpt_downloader.scene_context import scene_context
+        ground = np.full((600, 600), 100.0)
+        surface = ground+20
+        good = np.ones(ground.shape, bool)
+        forest = layer_for([(0, 0, 600, 600)])
+        _, trees, _, summaries = scene_context({'lasy': (QgsVectorLayerFeatureSource(forest), forest.crs())}, CONTEXT,
+                                               Grid(0, 600, 1, 600, 600), dict(x=300, y=300), 280,
+                                               np.arange(600), np.arange(600), ground, good, surface, good, self.event,
+                                               tree_limit=1000)
+        self.assertEqual(len(trees), 1000)
+        self.assertTrue(summaries[-1]['truncated'])
+        self.assertTrue(all(t['height'] == 20 for t in trees))
+
+    def test_image_plan_is_bounded_and_uses_exact_mesh_edges(self):
+        from nmt_nmpt_downloader.scene_imagery import image_plan
+        x, y = np.linspace(-1000, 1000, 1001), np.linspace(1000, -1000, 1001)
+        plan = image_plan(x, y, [500000, 500000], [499000, 499000, 501000, 501000], .25)
+        self.assertLessEqual(len(plan), 64)
+        self.assertLessEqual(sum(b['width_px']*b['height_px'] for b in plan), 64*1024**2)
+        cells = sum((b['row1']-b['row0'])*(b['col1']-b['col0']) for b in plan)
+        self.assertEqual(cells, 1000**2)
+        for block in plan:
+            self.assertLessEqual(block['row1']-block['row0'], 128)
+            self.assertLessEqual(block['col1']-block['col0'], 128)
+            self.assertEqual(block['bounds'][0], x[block['col0']]+500000)
+            self.assertEqual(block['bounds'][3], y[block['row0']]+500000)
+            self.assertLessEqual(block['resolution_m'], .251)
+
+    def test_local_image_mosaic_has_crs_correct_pixels_alpha_and_embedded_tiles(self):
+        from qgis.PyQt.QtGui import QImage, QColor
+        from nmt_nmpt_downloader.scene_imagery import image_plan, save_image_block, finish_image_blocks, make_preview
+        report = dict(report_dir=str(self.root))
+        scene = self.root/'scene.html'
+        scene.write_text('const textureTiles=/*SCENE_TEXTURE_TILES*/[];')
+        item = dict(model='NMPT', scene=str(scene), scene_bounds=[500000, 500000, 500400, 500400])
+        plan = image_plan(np.linspace(0, 400, 129), np.linspace(400, 0, 129), [500000, 500000], item['scene_bounds'], .1)
+        self.assertGreater(len(plan), 1)
+        blocks = []
+        for block in plan:
+            image = QImage(block['width_px'], block['height_px'], QImage.Format_RGBA8888)
+            image.fill(QColor(200 if block['col0'] == 0 else 40, 60, 100))
+            blocks.append(save_image_block(report, item, block, image))
+        finish_image_blocks(report, item, blocks)
+        dataset = gdal.Open(item['texture_vrt'])
+        self.assertIsNotNone(dataset)
+        self.assertEqual(dataset.RasterCount, 4)
+        self.assertEqual(dataset.GetSpatialRef().GetAuthorityCode(None), '2180')
+        self.assertEqual(dataset.GetGeoTransform()[0], 500000)
+        self.assertEqual(dataset.GetGeoTransform()[3], 500400)
+        self.assertEqual(dataset.GetRasterBand(1).ReadAsArray(1, 1, 1, 1)[0, 0], 200)
+        self.assertEqual(dataset.GetRasterBand(4).ReadAsArray(1, 1, 1, 1)[0, 0], 255)
+        self.assertIn('data:image/png;base64,', scene.read_text())
+        self.assertNotIn('/*SCENE_TEXTURE_TILES*/', scene.read_text())
+        self.assertEqual(item['texture_info']['tiles'], len(plan))
+        self.assertFalse(make_preview(item, blocks).isNull())
+        # The files can also be moved together and retain their relative source references.
+        import shutil
+        moved = self.root/'moved'
+        moved.mkdir()
+        shutil.copytree(self.root/'ortofoto_NMPT', moved/'ortofoto_NMPT')
+        shutil.copyfile(item['texture_vrt'], moved/'ortofoto_NMPT.vrt')
+        copied = gdal.Open(str(moved/'ortofoto_NMPT.vrt'))
+        np.testing.assert_array_equal(copied.GetRasterBand(1).ReadAsArray(), dataset.GetRasterBand(1).ReadAsArray())
+
     def test_source_mask_cache_reused_and_invalidated_after_source_change(self):
         first = self.engine().run()
         self.assertEqual(first['state'], 'completed', first.get('fatal_error'))
@@ -1455,6 +1521,8 @@ class AtlasTests(unittest.TestCase):
         image.fill(QColor(127, 127, 127))
         with self.assertRaisesRegex(ValueError, 'szare'):
             texture_quality(image)
+        self.assertEqual(texture_quality(image, allow_flat=True)['coverage_fraction'], 1,
+                         'A single small water/snow tile can be flat; the complete preview remains validated')
         image.fill(QColor(0, 0, 0, 0))
         with self.assertRaisesRegex(ValueError, 'przezroczyst'):
             texture_quality(image)
@@ -1543,6 +1611,73 @@ class AtlasTests(unittest.TestCase):
                 self.assertGreater(color.red(), 200)
                 self.assertLess(color.green(), 60)
                 self.assertEqual(detail['texture_layers'], ['Test ortofoto XYZ'])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_selected_wms_is_saved_as_high_resolution_local_tiles_and_partial_failure_is_reported(self):
+        from io import BytesIO
+        from PIL import Image
+        from qgis.core import QgsRasterLayer
+        from nmt_nmpt_downloader.scene_texture import SceneTextures
+        self.config['scene_texture_resolution'] = .05
+        report = self.engine().run()
+        requests_seen, bad = [], []
+
+        class Wms(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+
+            def do_GET(self):
+                params = {k.upper(): v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+                if params.get('REQUEST', '').lower() == 'getmap':
+                    requests_seen.append(params)
+                    if not bad:
+                        bad.append(params['BBOX'])
+                    if params['BBOX'] == bad[0]:
+                        self.send_error(500, 'Test missing image block')
+                        return
+                    stream = BytesIO()
+                    Image.new('RGBA', (int(params['WIDTH']), int(params['HEIGHT'])), (210, 50, 30, 255)).save(stream, format='PNG')
+                    data, kind = stream.getvalue(), 'image/png'
+                else:
+                    url = f'http://127.0.0.1:{self.server.server_port}/wms?'
+                    service = f'<DCPType><HTTP><Get><OnlineResource xmlns:xlink="http://www.w3.org/1999/xlink" xlink:type="simple" xlink:href="{url}"/></Get></HTTP></DCPType>'
+                    data = (f'<WMS_Capabilities version="1.3.0" xmlns="http://www.opengis.net/wms"><Service><Name>WMS</Name><Title>Test</Title></Service><Capability>'
+                            f'<Request><GetCapabilities><Format>text/xml</Format>{service}</GetCapabilities><GetMap><Format>image/png</Format>{service}</GetMap></Request>'
+                            '<Exception><Format>XML</Format></Exception><Layer><Title>Test</Title><CRS>EPSG:2180</CRS><Layer><Name>ortho</Name><Title>Ortho</Title><CRS>EPSG:2180</CRS>'
+                            '<BoundingBox CRS="EPSG:2180" minx="0" miny="0" maxx="201" maxy="201"/>'
+                            '</Layer></Layer></Capability></WMS_Capabilities>').encode()
+                    kind = 'text/xml'
+                self.send_response(200)
+                self.send_header('Content-Type', kind)
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Wms)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            layer = QgsRasterLayer(f'url=http://127.0.0.1:{server.server_port}/wms&layers=ortho&styles=&format=image/png&crs=EPSG:2180', 'Test WMS', 'wms')
+            self.assertTrue(layer.isValid())
+            QgsProject.instance().addMapLayer(layer)
+            report['options'].update(scene_texture_mode='layer', scene_texture_layer_id=layer.id())
+            task, results = SceneTextures(report), []
+            task.completed.connect(results.append)
+            task.start()
+            DownloaderTests.wait_until(self, lambda: bool(results), 25000)
+            self.assertNotIn('error', results[0], results)
+            self.assertGreater(len({item['BBOX'] for item in requests_seen}), 2)
+            # The QGIS WMS provider can request an extra resampling border pixel.
+            self.assertLessEqual(max(int(item['WIDTH']) for item in requests_seen), 1026)
+            self.assertTrue(any(item.get('texture_tile_errors') for item in report['details']))
+            for item in report['details']:
+                self.assertTrue(Path(item['texture_vrt']).is_file())
+                dataset = gdal.Open(item['texture_vrt'])
+                self.assertIsNotNone(dataset)
+                self.assertGreater(dataset.RasterXSize, 2048)
+                self.assertIn('data:image/png;base64,', Path(item['scene']).read_text())
+                self.assertGreater(len(item['texture_tiles']), 1)
         finally:
             server.shutdown()
             server.server_close()

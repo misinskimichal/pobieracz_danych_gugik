@@ -41,6 +41,11 @@ function eyePose(s,low,point,height,heading,pitch,cover=true){
   const eye=[point[0]/s.radius,point[1]/s.radius,(ground+height-low)/s.radius];
   return {eye,target:[eye[0]+Math.sin(angle)*Math.cos(tilt),eye[1]+Math.cos(angle)*Math.cos(tilt),eye[2]+Math.sin(tilt)],ground,eyeZ:ground+height};
 }
+function displaySurface(s,cover,forestObjects){
+  if(!cover)return s.ground;
+  if(!forestObjects)return s.surface;
+  return s.surface.map((row,r)=>row.map((z,c)=>z!==null&&s.forest&&s.forest[r][c]===1&&s.ground[r][c]!==null?s.ground[r][c]:z));
+}
 function terrainTile(s,heights,row0,col0,row1,col1,low,high,material) {
   const width=col1-col0+1,height=row1-row0+1,vertices=new Float32Array(width*height*12),indices=[];
   const bounds=s.texture_bounds||[s.x[0],s.y[s.y.length-1],s.x[s.x.length-1],s.y[0]];
@@ -70,11 +75,11 @@ void main(){vec3 p=aPosition;p.z*=uVertical;gl_Position=uMatrix*vec4(p,1.0);vNor
 `;
 const fragmentShader=`
 precision mediump float;
-uniform vec3 uSun; uniform sampler2D uTexture; uniform float uUseTexture;
+uniform vec3 uSun; uniform sampler2D uTexture; uniform float uUseTexture; uniform vec4 uUvTransform; uniform float uPhotoShade;
 varying mediump vec3 vNormal; varying mediump vec3 vColor; varying mediump vec2 vUv; varying mediump float vTextured;
-void main(){vec3 color=vColor;if(uUseTexture>0.5&&vTextured>0.5){vec4 photo=texture2D(uTexture,vUv);color=mix(vColor,photo.rgb,photo.a);}float light=0.56+0.44*max(dot(normalize(vNormal),uSun),0.0);gl_FragColor=vec4(color*light,1.0);}
+void main(){vec3 color=vColor;float photographed=0.0;if(uUseTexture>0.5&&vTextured>0.5){vec4 photo=texture2D(uTexture,vUv*uUvTransform.xy+uUvTransform.zw);color=mix(vColor,photo.rgb,photo.a);photographed=photo.a;}float light=0.56+0.44*max(dot(normalize(vNormal),uSun),0.0);light=mix(light,1.0,photographed*(1.0-uPhotoShade));gl_FragColor=vec4(color*light,1.0);}
 `;
-function startScene(s,textureUrl) {
+function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
   const $=id=>document.getElementById(id),canvas=$('view'),gl=canvas.getContext('webgl',{antialias:true,preserveDrawingBuffer:true,alpha:false});
   $('title').textContent=`${s.resource} · turbina ${s.turbine} · szczegółowa scena 3D`;
   $('info').textContent=`${s.demo?'DANE SYNTETYCZNE · ':''}Wersja ${s.version||'2.x'} · promień sceny ${s.radius} m · siatka ${s.x.length}×${s.y.length} · krok 3D ${s.step_m} m · krok analizy ${s.analysis_step_m} m · profil ${s.profile_radius||s.radius} m`;
@@ -86,14 +91,34 @@ function startScene(s,textureUrl) {
   const program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,vertexShader));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fragmentShader));gl.linkProgram(program);
   if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
   const attributes=[['aPosition',3,0],['aNormal',3,12],['aColor',3,24],['aUv',2,36],['aTextured',1,44]].map(([n,size,offset])=>({location:gl.getAttribLocation(program,n),size,offset}));
-  const uniforms=Object.fromEntries(['uMatrix','uVertical','uSun','uTexture','uUseTexture'].map(n=>[n,gl.getUniformLocation(program,n)]));
+  const uniforms=Object.fromEntries(['uMatrix','uVertical','uSun','uTexture','uUseTexture','uUvTransform','uPhotoShade'].map(n=>[n,gl.getUniformLocation(program,n)]));
   let zoom=1,drag=null,pending=false,dirty=true,batches=[],objects=[],rays=[],low=0,high=1,textureReady=false,textureImage=null,observerPoint=null;
   const locator=$('locator'),locatorCtx=locator.getContext('2d');
   let textureSize='';
+  const detailedTextures=new Map(),tileErrors=[];
+  let completedTextures=0;
+  const forestAvailable=(s.trees||[]).length&&(s.forest||[]).some(row=>row.some(v=>v===1));
+  $('forest-objects').checked=!!forestAvailable;$('forest-objects').disabled=!forestAvailable;
   function photoState(){
-    $('texture-status').textContent=textureReady?`Ortofotomapa ${textureSize}: ${$('photo').checked?'NAŁOŻONA NA MODEL 3D':'WYŁĄCZONA NA MODELU — kliknij Pokaż ortofotomapę'}. Mapka wyboru miejsca ma własny podgląd zdjęcia.`:(textureUrl?'Wczytywanie ortofotomapy…':'Brak osadzonej ortofotomapy. W QGIS wybierz jej źródło i kliknij Odśwież samą scenę 3D.');
+    $('texture-status').textContent=textureReady?`Zdjęcie: ${$('photo').checked?'rysowanie na modelu WŁĄCZONE':'WYŁĄCZONE NA MODELU — kliknij Pokaż ortofotomapę'}. Podgląd ${textureSize}; szczegółowe kafle ${detailedTextures.size}/${(s.texture_grid||imageBlocks).length}. ${tileErrors.length+exportIssues.length?'Błędy kafli: '+(tileErrors.length+exportIssues.length)+'. ':''}Sprawdź „Zdjęcie z góry”.`:(textureUrl?'Wczytywanie ortofotomapy…':'Brak osadzonej ortofotomapy. W QGIS wybierz jej źródło i kliknij Odśwież samą scenę 3D.');
   }
   photoState();
+  function putTexture(handle,image){
+    const maximum=Number(gl.getParameter(gl.MAX_TEXTURE_SIZE))||2048;
+    const width=image.naturalWidth||image.width,height=image.naturalHeight||image.height;
+    const limit=2**Math.floor(Math.log2(maximum));
+    const w=Math.min(limit,2**Math.ceil(Math.log2(width))),h=Math.min(limit,2**Math.ceil(Math.log2(height)));
+    let input=image;
+    if(width!==w||height!==h){const resized=document.createElement('canvas');resized.width=w;resized.height=h;resized.getContext('2d').drawImage(image,0,0,w,h);input=resized}
+    for(let i=0;i<8&&gl.getError()!==gl.NO_ERROR;i++){}
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,handle);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,input);gl.generateMipmap(gl.TEXTURE_2D);
+    const aniso=gl.getExtension('EXT_texture_filter_anisotropic')||gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic');
+    if(aniso)gl.texParameterf(gl.TEXTURE_2D,aniso.TEXTURE_MAX_ANISOTROPY_EXT,Math.min(16,gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+    const error=gl.getError();if(error!==gl.NO_ERROR)throw Error(`błąd karty graficznej ${error}`);
+  }
   const texture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,texture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([255,255,255,255]));
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
@@ -101,17 +126,21 @@ function startScene(s,textureUrl) {
     textureImage=image;const download=$('download-texture');download.href=textureUrl;download.download=`tekstura_${s.resource}.png`;download.style.display='';schedule();
     try{
       if(gl.isContextLost&&gl.isContextLost())throw Error('utracono kontekst graficzny');
-      // Earlier draw errors must not be misreported as an image upload error.
-      for(let i=0;i<8&&gl.getError()!==gl.NO_ERROR;i++){}
       const width=image.naturalWidth||image.width,height=image.naturalHeight||image.height;
-      const maximum=Number(gl.getParameter(gl.MAX_TEXTURE_SIZE))||2048;let input=image;
-      if(width>maximum||height>maximum){const factor=Math.min(maximum/width,maximum/height),resized=document.createElement('canvas');resized.width=Math.max(1,Math.floor(width*factor));resized.height=Math.max(1,Math.floor(height*factor));resized.getContext('2d').drawImage(image,0,0,resized.width,resized.height);input=resized}
-      gl.bindTexture(gl.TEXTURE_2D,texture);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,input);
-      const error=gl.getError();if(error!==gl.NO_ERROR)throw Error(`błąd karty graficznej ${error}`);
+      putTexture(texture,image);
       textureReady=true;textureSize=`${width||'?'} × ${height||'?'}`;$('photo').disabled=false;$('show-photo').disabled=false;$('photo').checked=true;
       photoState();schedule();
     }catch(error){textureReady=false;$('photo').disabled=true;$('show-photo').disabled=true;$('texture-status').textContent='Zdjęcie jest w HTML i na mapce, ale nie udało się nałożyć go w 3D: '+error.message+'. Możesz pobrać PNG przyciskiem powyżej.';schedule()}
   };image.onerror=()=>{$('texture-status').textContent='Nie można odczytać osadzonej ortofotomapy. Odśwież scenę w QGIS i sprawdź źródło.'};image.src=textureUrl}
+  let nextImage=0;
+  function loadBlock(){
+    if(nextImage>=imageBlocks.length)return;
+    const block=imageBlocks[nextImage++],image=new Image();
+    function done(error){completedTextures++;if(error)tileErrors.push({id:block.id,error:String(error)});photoState();schedule();loadBlock()}
+    image.onload=()=>{try{const handle=gl.createTexture();putTexture(handle,image);detailedTextures.set(block.id,{handle,bounds:block.bounds});done()}catch(error){done(error.message)}};
+    image.onerror=()=>done('Nie można odczytać zdjęcia');image.src=block.image;
+  }
+  for(let i=0;i<Math.min(4,imageBlocks.length);i++)loadBlock();
   function drawLocator(){
     if(!locatorCtx)return;
     const b=s.texture_bounds||[s.x[0],s.y[s.y.length-1],s.x[s.x.length-1],s.y[0]],w=locator.width,h=locator.height;
@@ -161,11 +190,12 @@ function startScene(s,textureUrl) {
   function occupiedSurface(){return !!($('cover').checked||($('trees').checked&&(s.trees||[]).length)||($('buildings').checked&&(s.buildings||[]).length))}
   function rebuild(){
     dispose(batches);dispose(objects);dispose(rays);batches=[];objects=[];rays=[];
-    const heights=$('cover').checked?s.surface:s.ground;
+    const heights=displaySurface(s,$('cover').checked,$('forest-objects').checked&&$('trees').checked);
     low=Infinity;high=-Infinity;for(const row of heights)for(const z of row)if(z!==null){low=Math.min(low,z);high=Math.max(high,z)}
     if(!Number.isFinite(low)){low=0;high=1;$('status').textContent='Brak poprawnych wysokości w scenie';return}
     $('low').textContent=`${low.toFixed(1)} m`;$('high').textContent=`${high.toFixed(1)} m`;
-    for(let r=0;r<heights.length-1;r+=128)for(let c=0;c<heights[0].length-1;c+=128){const tile=terrainTile(s,heights,r,c,Math.min(r+128,heights.length-1),Math.min(c+128,heights[0].length-1),low,high,$('material').value);if(tile.indices.length)batches.push(upload(tile))}
+    if(s.texture_grid&&s.texture_grid.length){for(const block of s.texture_grid){const tile=terrainTile(s,heights,block.row0,block.col0,block.row1,block.col1,low,high,$('material').value);if(tile.indices.length){const batch=upload(tile);batch.textureId=block.id;batches.push(batch)}}}
+    else for(let r=0;r<heights.length-1;r+=128)for(let c=0;c<heights[0].length-1;c+=128){const tile=terrainTile(s,heights,r,c,Math.min(r+128,heights.length-1),Math.min(c+128,heights[0].length-1),low,high,$('material').value);if(tile.indices.length)batches.push(upload(tile))}
     const construction=[];
     if(s.ground_z!==null){cylinder(construction,0,0,s.ground_z,s.hub,Math.max(.7,s.hub*.018),[.94,.96,.97]);const z=s.ground_z+s.hub;
       for(let k=0;k<3;k++){const a=(k*120+20)*Math.PI/180,r=s.diameter/2,w=s.diameter*.018;triangle(construction,[-w,0,z],[w,0,z],[r*Math.sin(a),0,z+r*Math.cos(a)],[.98,.98,.98])}}
@@ -180,8 +210,16 @@ function startScene(s,textureUrl) {
     const treeCount=$('trees').checked?(s.trees||[]).length:0,buildingCount=$('buildings').checked?(s.buildings||[]).length:0;
     $('status').textContent=`Gotowe · ${batches.reduce((n,b)=>n+b.count/3,0).toLocaleString('pl-PL')} trójkątów terenu · ${treeCount} symboli drzew · ${buildingCount} brył budynków · braki pozostają otworami`;
     $('context-status').textContent=(s.context_notes||[]).join(' ')+' '+(s.resource!=='NMPT'?'To scena NMT — korony i dachy obejrzysz w scenie NMPT. ':(!(s.trees||[]).length?'Brak dodatkowych symboli drzew: wskaż w QGIS warstwę lasów lub punktów drzew. ':'')+(!(s.buildings||[]).length?'Brak dodatkowych brył budynków: wskaż warstwę obrysów budynków. ':''))+'NMPT samo pokazuje korony i dachy jako powierzchnię; nie rozpoznaje obiektów. '+(!$('cover').checked&&(treeCount||buildingCount)?'WIDOK OBIEKTÓW NA NMT: przerwy między symbolami nie są wynikiem widoczności. ':'')+'Symbole i bryły są uproszczonym podglądem.';
+    if($('forest-objects').checked&&$('trees').checked)$('context-status').textContent+=' W LASACH pokazujemy korony nad NMT zamiast przykrywającej je powierzchni NMPT. To prezentacja; odstępy między symbolami nie potwierdzają prześwitów.';
   }
-  function bind(batch){gl.bindBuffer(gl.ARRAY_BUFFER,batch.buffer);for(const a of attributes){gl.enableVertexAttribArray(a.location);gl.vertexAttribPointer(a.location,a.size,gl.FLOAT,false,48,a.offset)}if(batch.index){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,batch.index);gl.drawElements(batch.mode,batch.count,gl.UNSIGNED_SHORT,0)}else gl.drawArrays(batch.mode,0,batch.count)}
+  function bind(batch){
+    const block=detailedTextures.get(batch.textureId),origin=s.origin||[0,0],bounds=s.texture_bounds||[s.x[0],s.y[s.y.length-1],s.x[s.x.length-1],s.y[0]];
+    let uv=[1,1,0,0];
+    if(block){const b=block.bounds,w=b[2]-b[0],h=b[3]-b[1];uv=[(bounds[2]-bounds[0])/w,(bounds[3]-bounds[1])/h,(bounds[0]+origin[0]-b[0])/w,(bounds[1]+origin[1]-b[1])/h]}
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,block?block.handle:texture);gl.uniform4fv(uniforms.uUvTransform,new Float32Array(uv));
+    gl.uniform1f(uniforms.uUseTexture,$('photo').checked&&(block||textureReady)?1:0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,batch.buffer);for(const a of attributes){gl.enableVertexAttribArray(a.location);gl.vertexAttribPointer(a.location,a.size,gl.FLOAT,false,48,a.offset)}if(batch.index){gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,batch.index);gl.drawElements(batch.mode,batch.count,gl.UNSIGNED_SHORT,0)}else gl.drawArrays(batch.mode,0,batch.count)
+  }
   function draw(){pending=false;try{
     if(dirty){rebuild();dirty=false}
     const dpr=Math.min(window.devicePixelRatio||1,2),w=canvas.clientWidth,h=canvas.clientHeight;
@@ -194,6 +232,7 @@ function startScene(s,textureUrl) {
       const origin=s.origin||[0,0];$('eye-status').textContent=`X=${(origin[0]+observerPoint[0]).toFixed(2)}, Y=${(origin[1]+observerPoint[1]).toFixed(2)} · grunt NMT ${pose.ground.toFixed(2)} m + oko ${$('eye-height').value} m = ${pose.eyeZ.toFixed(2)} m · ${s.height_system||''}`;}
     gl.uniformMatrix4fv(uniforms.uMatrix,false,multiply(projection(+$('fov').value,w/h,distance,$('projection').value==='ortho',near,far),lookAt(eye,target)));gl.uniform1f(uniforms.uVertical,vertical);
     const sun=+$('sun').value*Math.PI/180;gl.uniform3fv(uniforms.uSun,new Float32Array([Math.sin(sun)*.707,Math.cos(sun)*.707,.707]));gl.uniform1i(uniforms.uTexture,0);gl.uniform1f(uniforms.uUseTexture,textureReady&&$('photo').checked?1:0);
+    gl.uniform1f(uniforms.uPhotoShade,$('photo-shade').checked?1:0);
     gl.clearColor(.83,.9,.91,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1,1);for(const b of batches)bind(b);gl.disable(gl.POLYGON_OFFSET_FILL);for(const b of objects)bind(b);
     if($('lines').checked){gl.disable(gl.DEPTH_TEST);for(const b of rays)bind(b);gl.enable(gl.DEPTH_TEST)}drawLocator();
   }catch(error){$('status').textContent='Problem renderowania: '+error.message+'. Użyj lekkiego podglądu.'}}
@@ -201,7 +240,17 @@ function startScene(s,textureUrl) {
   $('photo').addEventListener('input',()=>{photoState();schedule()});$('show-photo').onclick=()=>{$('photo').checked=true;photoState();schedule()};
   $('object-view').disabled=!(s.trees||[]).length&&!(s.buildings||[]).length;
   $('object-view').onclick=()=>{$('cover').checked=false;$('trees').checked=true;$('buildings').checked=true;dirty=true;schedule()};
-  for(const id of ['bearing','tilt','vertical','sun','projection','fov','material','cover','trees','buildings','lines'])$(id).addEventListener('input',()=>{if(['material','cover','trees','buildings'].includes(id))dirty=true;schedule()});
+  $('photo-top').onclick=()=>{$('camera').value='orbit';cameraMode();$('tilt').value=80;$('fov').value=45;zoom=1;schedule()};
+  canvas.sceneDiagnostics=()=>({version:s.version,resource:s.resource,preview_loaded:textureReady,
+    photo_enabled:$('photo').checked,tiles_expected:imageBlocks.length,tiles_loaded:detailedTextures.size,
+    export_tiles_expected:(s.texture_grid||imageBlocks).length,export_errors:exportIssues,
+    tiles_completed:completedTextures,tile_errors:tileErrors,max_texture_size:gl.getParameter(gl.MAX_TEXTURE_SIZE),
+    forest_presentation:$('forest-objects').checked,continuous_surface:$('cover').checked,
+    tree_symbols:(s.trees||[]).length,building_symbols:(s.buildings||[]).length,
+    camera:$('camera').value,texture_status:$('texture-status').textContent,render_status:$('status').textContent,
+    gl_error:gl.getError()});
+  $('diagnostics').onclick=()=>{const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(canvas.sceneDiagnostics(),null,2)],{type:'application/json'}));a.href=url;a.download='diagnostyka_widoku_3d.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+  for(const id of ['bearing','tilt','vertical','sun','projection','fov','material','cover','trees','buildings','lines','forest-objects','photo-shade'])$(id).addEventListener('input',()=>{if(['material','cover','trees','buildings','forest-objects'].includes(id))dirty=true;schedule()});
   $('reset').onclick=()=>{$('camera').value='orbit';cameraMode();$('bearing').value=s.azimuth;$('tilt').value=28;$('vertical').value=1;$('fov').value=45;$('projection').value='perspective';zoom=1;schedule()};
   $('save').onclick=()=>{draw();const a=document.createElement('a');a.download=`scena_3d_${s.resource}.png`;a.href=canvas.toDataURL('image/png');a.click()};
   canvas.onpointerdown=e=>{canvas.focus?.();drag={x:e.clientX,y:e.clientY,b:+$('bearing').value,t:+$('tilt').value};canvas.setPointerCapture(e.pointerId)};
@@ -211,5 +260,5 @@ function startScene(s,textureUrl) {
   canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();$('status').textContent='Utracono kontekst graficzny. Odśwież stronę albo wybierz mniejszą siatkę.'});window.addEventListener('resize',schedule);
   if(s.start_eye){$('camera').value='eye';cameraMode()}schedule();
 }
-if(typeof module!=='undefined'&&module.exports)module.exports={heightColor,multiply,lookAt,projection,terrainTile,vertexShader,fragmentShader,surfaceAt,eyePose};
-if(typeof document!=='undefined'){try{startScene(scene,textureData)}catch(error){document.getElementById('status').textContent='Nie udało się otworzyć WebGL: '+error.message+'. Użyj lekkiego podglądu.'}}
+if(typeof module!=='undefined'&&module.exports)module.exports={heightColor,multiply,lookAt,projection,terrainTile,vertexShader,fragmentShader,surfaceAt,eyePose,displaySurface};
+if(typeof document!=='undefined'){try{startScene(scene,textureData,typeof textureTiles==='undefined'?[]:textureTiles,typeof textureTileIssues==='undefined'?[]:textureTileIssues)}catch(error){document.getElementById('status').textContent='Nie udało się otworzyć WebGL: '+error.message+'. Użyj lekkiego podglądu.'}}

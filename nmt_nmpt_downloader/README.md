@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.4.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.5.0
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.4.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.5.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -76,6 +76,16 @@ Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_N
 
 [Dokładna instrukcja i omówienie inspiracji z PDF](../docs/Instrukcja_ATLAS_2.2.0.md). Nowe pliki wyniku: `raport.gpkg`, `scena_3d_lekka_*.html` i opcjonalnie `tekstura_*.png`. Szczegółowa scena zawiera obraz w sobie. Modeli, cache i raportów użytkownika nie ma w ZIP-ie instalacyjnym.
 
+
+## Wydanie 2.5.0 — lokalna ortofotomapa WMS w szczegółowych kaflach
+
+WMS/WMTS może być źródłem zdjęcia. Eksport zapisuje w folderze atlasu do 64 georeferencyjnych kafli/model i lokalną mozaikę `ortofoto_NMPT.vrt` (analogicznie NMT). Cel domyślny: 0,25 m/px, do wyboru 0,10 / 0,25 / 0,50 / 1 m/px; rzeczywistą rozdzielczość ograniczają źródło oraz budżet 64 MP/model i podaje ją raport. Każdy blok ma do 1024×1024 px. PNG 2048 pozostaje małym podglądem mapki; model korzysta z pełnych kafli. HTML zawiera ich kopię i działa bez dalszych zapytań WMS. Przycisk w QGIS dodaje lokalne zdjęcie do projektu. Zachowaj VRT razem z folderem PNG/plikami georeferencji.
+
+Własny renderer wiąże teksturę i jej współrzędne dla każdego bloku osobno, tworzy mipmapy i korzysta z filtrowania anizotropowego, jeśli urządzenie je obsługuje. Zdjęcie domyślnie zachowuje barwy bez dodatkowego cieniowania. **Zdjęcie z góry** pozwala sprawdzić dopasowanie, a **Zapisz diagnostykę widoku** zapisuje informacje z rzeczywistego WebGL, brakujące kafle i stany przełączników.
+
+Gdy przygotowano korony i lasy, **Pokaż korony zamiast powierzchni lasu** jest domyślnie włączone: usuwa przykrywającą symbole powierzchnię NMPT tylko w lasach, pozostawiając tam grunt i korony. Wyłączenie wraca do pełnego NMPT. Wysokości źródłowe, braki i sprawdzanie położenia oka pozostają zachowane. To wariant prezentacji; odstępy między koronami nie są wynikiem analizy. Limit koron lasu: 2000 / 5000 / 10000, domyślnie 5000.
+
+Opis wdrożenia, ograniczeń, wykorzystanych wzorców Qgis2threejs i testów: [instrukcja 2.5.0](../docs/Instrukcja_ATLAS_2.5.0.md).
 
 ## Wydanie 2.4.0 — zdjęcie niezależne od palety, budynki i lasy
 

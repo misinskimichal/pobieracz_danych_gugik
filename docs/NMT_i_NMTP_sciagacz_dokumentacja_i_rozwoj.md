@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.4.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.5.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -17,6 +17,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Wydanie 2.3.1:** aktualizacja HTML przed otwarciem po zmianie zdjęcia, osobny podgląd PNG i diagnostyka tekstury WebGL — [instrukcja 2.3.1](Instrukcja_ATLAS_2.3.1.md).
 
 **Wydanie 2.4.0:** niezależny przełącznik ortofotomapy, bryły budynków z obrysów i wysokości NMPT, ilustracyjne korony z lasów oraz wariant „NMT + obiekty BDOT” — [instrukcja 2.4.0](Instrukcja_ATLAS_2.4.0.md).
+
+**Wydanie 2.5.0:** WMS/WMTS do szczegółowych lokalnych kafli i mozaiki QGIS, filtrowanie obrazu z poziomu oczu, widoczne korony zamiast powierzchni lasu i test w prawdziwym Chromium — [instrukcja 2.5.0](Instrukcja_ATLAS_2.5.0.md).
 
 ## Spis treści
 
@@ -1752,3 +1754,14 @@ Warstwa obrysów budynków jest osobnym źródłem prezentacji, niezależnym od 
 Warstwa lasów bez punktów drzew daje do 2000 ilustracyjnych koron, rozmieszczonych na regularnych próbkach wewnątrz rzeczywistych poligonów; wysokość każdej pochodzi z NMPT−NMT. Obecność punktów drzew wyłącza takie dodatkowe próbkowanie. Wariant „NMT + obiekty BDOT” pozwala oglądać korony i bryły bez przykrywającej je ciągłej powierzchni NMPT, z wyraźną informacją, że przerwy między symbolami nie są wynikiem analizy widoczności. Pozycja oka nadal sprawdza oryginalny model powierzchni, jeśli obiekty są widoczne.
 
 Opcje warstw sceny są zapisywane w `scene_view_options.scene_context_layer_ids` i odtwarzane przy wczytaniu raportu. Obliczone rastry pozostają bez zmian. Dokumentacja, ograniczenia, testy oraz syntetyczny przykład są w [instrukcji 2.4.0](Instrukcja_ATLAS_2.4.0.md).
+
+
+## Suplement M — wdrożone w 2.5.0: szczegółowe zdjęcie WMS i prezentacja lasów
+
+`scene_imagery.py` planuje do 8×8 obrazów na granicach komórek siatki. Każdy ma do 1024×1024 px; wspólny budżet wynosi 64 MP/model. Domyślny cel to 0,25 m/px. Zdjęcie powstaje z wybranej warstwy QGIS WMS/WMTS lub publicznego WMS GUGiK, jest zapisywane lokalnie jako georeferencyjne PNG oraz VRT i osadzane w HTML. Mała mapka korzysta z oddzielnego podglądu 2048 px. Nie trzeba dostarczać dodatkowego rastra, jeśli źródło WMS działa. Nie znamy rzeczywistego natywnego GSD/epoki każdego dowolnego WMS; cel eksportu nie gwarantuje takiej szczegółowości źródła.
+
+Renderer odtwarza transformację UV dla każdego bloku, jawnie wiąże teksturę, używa mipmap i dostępnej anizotropii. Ogranicza to problem pojedynczego, słabo czytelnego zdjęcia przy kamerze z oczu. Zdjęcie ma domyślnie niezmieniane dodatkowym cieniowaniem barwy. Uszkodzone kafle są odnotowane, a pozostałe powstają dalej. Braki w HTML i dane WebGL można zapisać osobnym przyciskiem diagnostycznym.
+
+W lasach z przygotowanymi koronami wariant prezentacji domyślnie rysuje grunt NMT i korony zamiast zakrywającej je powierzchni NMPT. Włączenie pełnego NMPT nadal służy porównaniu; dane wysokościowe nie są modyfikowane. Otwory NoData są zachowane. Gęstość ilustracyjnych koron ma limit 2000/5000/10000, a ich umowny rozkład nie opisuje prześwitów i nie zmienia analizy widoczności.
+
+Przejrzano wskazany fork Qgis2threejs, szczególnie eksport obrazów, materiały bloków DEM oraz filtrowanie tekstur. Wykorzystano te wzorce we własnym rendererze; wtyczka pozostaje samodzielna. Weryfikacja obejmuje 83 testy Python/QGIS, test wybranego WMS z awarią jednego kafla, rzeczywiste pobranie kafla GUGiK oraz pełny test obrazu w Chromium/WebGL. Szczegóły i źródła zawiera [instrukcja 2.5.0](Instrukcja_ATLAS_2.5.0.md).

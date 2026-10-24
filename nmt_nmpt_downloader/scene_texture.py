@@ -15,6 +15,7 @@ from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem, QgsMapRende
                        QgsProject, QgsRectangle, QgsTask)
 
 from .core import Canceled, atomic_json, check_cancel
+from .scene_imagery import save_image_block, finish_image_blocks, make_preview
 
 ORTO_WMS = 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution'
 
@@ -36,7 +37,7 @@ def webmercator_bounds(bounds):
             math.ceil(max(p[0] for p in points)), math.ceil(max(p[1] for p in points))]
 
 
-def reproject_image(image, source_bounds, target_bounds, pixels):
+def reproject_image(image, source_bounds, target_bounds, pixels, source_epsg=3857):
     if image.isNull():
         raise ValueError('Geoportal nie zwrócił obrazu ortofotomapy')
     image = image.convertToFormat(QImage.Format_RGBA8888)
@@ -47,7 +48,7 @@ def reproject_image(image, source_bounds, target_bounds, pixels):
     source.SetGeoTransform((source_bounds[0], (source_bounds[2]-source_bounds[0])/image.width(), 0,
                             source_bounds[3], 0, -(source_bounds[3]-source_bounds[1])/image.height()))
     crs = osr.SpatialReference()
-    crs.ImportFromEPSG(3857)
+    crs.ImportFromEPSG(source_epsg)
     source.SetProjection(crs.ExportToWkt())
     for index, color in enumerate([gdal.GCI_RedBand, gdal.GCI_GreenBand, gdal.GCI_BlueBand, gdal.GCI_AlphaBand]):
         source.GetRasterBand(index+1).WriteArray(values[:, :, index])
@@ -60,7 +61,7 @@ def reproject_image(image, source_bounds, target_bounds, pixels):
     return QImage(array.data, array.shape[1], array.shape[0], array.strides[0], QImage.Format_RGBA8888).copy()
 
 
-def texture_quality(image):
+def texture_quality(image, allow_flat=False):
     if image.isNull():
         raise ValueError('Usługa nie zwróciła poprawnego obrazu ortofotomapy')
     sample = image.scaled(256, 256, Qt.KeepAspectRatio, Qt.FastTransformation).convertToFormat(QImage.Format_RGBA8888)
@@ -74,7 +75,7 @@ def texture_quality(image):
     rgb = pixels[opaque, :3].astype(np.int16)
     span = int(np.ptp(rgb, axis=0).max())
     chroma = int(np.max(np.max(rgb, axis=1) - np.min(rgb, axis=1)))
-    if span <= 2 and chroma <= 8:
+    if not allow_flat and span <= 2 and chroma <= 8:
         raise ValueError('Źródło zwróciło jednolite szare/białe tło zamiast rozpoznawalnej ortofotomapy. Wybierz inną warstwę lub Geoportal.')
     return dict(coverage_fraction=round(coverage, 4), sampled_range=span,
                 width=image.width(), height=image.height())
@@ -125,6 +126,25 @@ class GeoportalTextureTask(QgsTask):
                 for number, item in enumerate(self.report.get('details', [])):
                     check_cancel(self.event)
                     bounds = item['scene_bounds']
+                    plan = item.get('texture_plan', [])
+                    blocks, errors = [], []
+                    if plan:
+                        for index, block in enumerate(plan):
+                            check_cancel(self.event)
+                            self.status.emit(f'Geoportal: {item["model"]}, zdjęcie {index+1}/{len(plan)} · {block["resolution_m"]:.2f} m/px')
+                            try:
+                                image = self.fetch(session, block['bounds'], [block['width_px'], block['height_px']])
+                                blocks.append(save_image_block(self.report, item, block, image))
+                            except Canceled:
+                                raise
+                            except Exception as exc:
+                                errors.append(dict(tile=block['id'], error=str(exc)))
+                        if not blocks:
+                            raise ValueError('Nie udało się pobrać żadnego kafla ortofotomapy: ' + str(errors[:1]))
+                        check_cancel(self.event)
+                        embed_texture(self.report, item, make_preview(item, blocks), ['Geoportal GUGiK · ORTO StandardResolution'], 'geoportal')
+                        finish_image_blocks(self.report, item, blocks, errors)
+                        continue
                     width, height = bounds[2]-bounds[0], bounds[3]-bounds[1]
                     pixels = [max(1, round(2048 * value / max(width, height))) for value in (width, height)]
                     self.status.emit(f'Geoportal: ortofotomapa {item["model"]}, {number+1}/{len(self.report["details"])}')
@@ -152,9 +172,51 @@ class GeoportalTextureTask(QgsTask):
             self.result = dict(error='Ortofotomapa Geoportal: ' + str(exc))
         return False
 
+    def fetch(self, session, bounds, pixels):
+        mercator = webmercator_bounds(bounds)
+        params = dict(SERVICE='WMS', REQUEST='GetMap', VERSION='1.3.0', CRS='EPSG:3857',
+                      BBOX=','.join(map(str, mercator)), WIDTH=pixels[0], HEIGHT=pixels[1],
+                      LAYERS='Raster', STYLES='', FORMAT='image/jpeg')
+        with session.get(ORTO_WMS, params=params, timeout=(10, 45), stream=True) as response:
+            response.raise_for_status()
+            data = bytearray()
+            for chunk in response.iter_content(65536):
+                check_cancel(self.event)
+                data.extend(chunk)
+                if len(data) > 32*1024*1024:
+                    raise ValueError('Odpowiedź ortofotomapy przekracza 32 MB')
+        check_cancel(self.event)
+        return reproject_image(QImage.fromData(bytes(data)), mercator, bounds, pixels)
+
     def cancel(self):
         self.event.set()
         super().cancel()
+
+    def finished(self, success):
+        self.completed.emit(self.result or dict(canceled=True))
+
+
+class ImageBundleTask(QgsTask):
+    completed = pyqtSignal(object)
+
+    def __init__(self, report, item, blocks, errors, sources, mode):
+        super().__init__('Zapis ortofotomapy lokalnej i HTML', QgsTask.CanCancel)
+        self.report, self.item, self.blocks, self.errors, self.sources, self.mode = report, item, blocks, errors, sources, mode
+        self.result = None
+
+    def run(self):
+        try:
+            image = make_preview(self.item, self.blocks)
+            if self.isCanceled():
+                self.result = dict(canceled=True)
+                return False
+            embed_texture(self.report, self.item, image, self.sources, self.mode)
+            finish_image_blocks(self.report, self.item, self.blocks, self.errors)
+            self.result = dict(completed=True)
+            return True
+        except Exception as exc:
+            self.result = dict(error=str(exc))
+            return False
 
     def finished(self, success):
         self.completed.emit(self.result or dict(canceled=True))
@@ -168,6 +230,7 @@ class SceneTextures(QObject):
         super().__init__(parent)
         self.report, self.job = report, None
         self.index, self.canceled, self.geo_task = 0, False, None
+        self.block_index, self.blocks, self.block_errors, self.bundle_task = 0, [], [], None
         project = QgsProject.instance()
         options = report.get('scene_view_options') or report.get('options', {})
         self.mode = options.get('scene_texture_mode', 'visible')
@@ -216,17 +279,34 @@ class SceneTextures(QObject):
             return
         try:
             item = details[self.index]
-            self.status.emit(f'Tekstura 3D w tle: {item["model"]}, {self.index+1}/{len(details)}')
+            plan = item.get('texture_plan', [])
+            if plan and self.block_index >= len(plan):
+                if not self.blocks:
+                    raise ValueError('Źródło nie zwróciło poprawnych kafli zdjęcia: ' + str(self.block_errors[:1]))
+                self.status.emit(f'{item["model"]}: zapis lokalnej ortofotomapy i HTML w tle…')
+                self.bundle_task = ImageBundleTask(self.report, item, self.blocks, self.block_errors,
+                                                   [layer.name() for layer in self.layers], self.mode)
+                self.bundle_task.completed.connect(self.bundle_finished)
+                QgsApplication.taskManager().addTask(self.bundle_task)
+                return
+            block = plan[self.block_index] if plan else None
+            self.status.emit(f'Tekstura 3D w tle: {item["model"]}, ' +
+                             (f'zdjęcie {self.block_index+1}/{len(plan)} · {block["resolution_m"]:.2f} m/px' if block else f'{self.index+1}/{len(details)}'))
             settings = QgsMapSettings()
             settings.setDestinationCrs(QgsCoordinateReferenceSystem('EPSG:2180'))
-            extent = QgsRectangle(*item['scene_bounds'])
+            extent = QgsRectangle(*(block['bounds'] if block else item['scene_bounds']))
             width, height = extent.width(), extent.height()
-            settings.setOutputSize(QSize(max(1, round(2048 * width / max(width, height))),
+            settings.setOutputSize(QSize(block['width_px'], block['height_px']) if block else
+                                   QSize(max(1, round(2048 * width / max(width, height))),
                                          max(1, round(2048 * height / max(width, height)))))
+            settings.setDevicePixelRatio(1)
+            settings.setOutputDpi(96)
             settings.setExtent(extent)
             settings.setBackgroundColor(QColor(Qt.transparent))
             settings.setFlag(QgsMapSettings.RenderBlocking, True)
             settings.setLayers(self.layers)
+            visible = settings.visibleExtent()
+            self.render_bounds = [visible.xMinimum(), visible.yMinimum(), visible.xMaximum(), visible.yMaximum()]
             self.job = QgsMapRendererParallelJob(settings)
             self.job.finished.connect(self.rendered)
             self.job.start()
@@ -243,12 +323,36 @@ class SceneTextures(QObject):
             if errors:
                 raise ValueError('; '.join(errors))
             item = self.report['details'][self.index]
-            embed_texture(self.report, item, self.job.renderedImage(), [layer.name() for layer in self.layers], self.mode)
+            plan = item.get('texture_plan', [])
+            if plan:
+                block, image = plan[self.block_index], self.job.renderedImage()
+                if any(abs(a-b) > 1e-7 for a, b in zip(self.render_bounds, block['bounds'])):
+                    image = reproject_image(image, self.render_bounds, block['bounds'], [image.width(), image.height()], 2180)
+                self.blocks.append(save_image_block(self.report, item, block, image))
+                self.block_index += 1
+            else:
+                embed_texture(self.report, item, self.job.renderedImage(), [layer.name() for layer in self.layers], self.mode)
+                self.index += 1
             self.job = None
-            self.index += 1
             QTimer.singleShot(0, self.next_map)
         except Exception as exc:
-            self.fail(exc)
+            item = self.report['details'][self.index]
+            if item.get('texture_plan'):
+                self.block_errors.append(dict(tile=item['texture_plan'][self.block_index]['id'], error=str(exc)))
+                self.block_index += 1
+                self.job = None
+                QTimer.singleShot(0, self.next_map)
+            else:
+                self.fail(exc)
+
+    def bundle_finished(self, result):
+        self.bundle_task = None
+        if self.canceled or result.get('canceled') or result.get('error'):
+            self.finish(result if result.get('error') else dict(canceled=True))
+            return
+        self.index += 1
+        self.block_index, self.blocks, self.block_errors = 0, [], []
+        QTimer.singleShot(0, self.next_map)
 
     def fail(self, exc):
         self.job = None
@@ -258,5 +362,7 @@ class SceneTextures(QObject):
         self.canceled = True
         if self.geo_task:
             self.geo_task.cancel()
+        if self.bundle_task:
+            self.bundle_task.cancel()
         if self.job:
             self.job.cancelWithoutBlocking()

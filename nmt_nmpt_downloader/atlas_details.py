@@ -210,13 +210,19 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
 
     from .scene_context import scene_context
     forest, trees, buildings, context_summary = scene_context(scene_contexts or {}, transform_context, grid, turbine, radius, rows, cols,
-                                                              ground, ground_valid, surface, surface_valid, event)
+                                                              ground, ground_valid, surface, surface_valid, event,
+                                                              tree_limit=int(options.get('scene_forest_trees', 5000)))
+    bounds = [grid.xmin+x0*grid.step, grid.ymax-y1*grid.step, grid.xmin+x1*grid.step, grid.ymax-y0*grid.step]
+    from .scene_imagery import image_plan
+    texture_plan = image_plan(x.tolist(), y.tolist(), [turbine['x'], turbine['y']], bounds,
+                              options.get('scene_texture_resolution', .25))
     labels = dict(lasy='Lasy', drzewa='Punkty drzew', budynki_3d='Budynki', korony_lasu='Ilustracyjne korony lasu')
     payload = dict(version=VERSION, resource=spec['resource'], turbine=str(turbine['id']), radius=radius, demo=bool(options.get('demo')),
                    origin=[turbine['x'], turbine['y']], height_system=spec.get('height', ''),
                    camera_observer=[float(camera[0])-turbine['x'], float(camera[1])-turbine['y']] if camera else None,
                    eye_height=float(options.get('scene_eye', options['eye'])), start_eye=bool(options.get('scene_start_eye', False)),
                    camera_warning=camera_warning,
+                   texture_grid=texture_plan,
                    profile_radius=spec['radius'], forest=forest, trees=trees, buildings=buildings, context_summary=context_summary,
                    context_notes=[f'{labels.get(item["role"], item["role"])}: {item["features"]} obiektów, pominięto {item["skipped"]}.' +
                                   (' Osiągnięto limit podglądu.' if item['truncated'] else '') for item in context_summary],
@@ -247,6 +253,6 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     bounds = [grid.xmin+x0*grid.step, grid.ymax-y1*grid.step, grid.xmin+x1*grid.step, grid.ymax-y0*grid.step]
     return dict(model=spec['resource'], turbine=str(turbine['id']), profile=str(profile_path), scene=str(scene),
                 fallback_scene=str(fallback), scene_bounds=bounds, scene_radius=radius, vertices=[len(cols), len(rows)],
-                context_summary=context_summary, azimuth=data['azimuth'], preview_step_m=grid.step * stride,
+                context_summary=context_summary, texture_plan=texture_plan, azimuth=data['azimuth'], preview_step_m=grid.step * stride,
                 profile_status=data['status'], camera_observer=camera, camera_warning=camera_warning,
                 eye_height=payload['eye_height'])

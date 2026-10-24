@@ -60,7 +60,7 @@ def building_preview(geometry, grid, turbine, radius, ground, ground_valid, surf
 
 
 def scene_context(contexts, transform_context, grid, turbine, radius, rows, cols,
-                  ground, ground_valid, surface, surface_valid, event):
+                  ground, ground_valid, surface, surface_valid, event, tree_limit=5000):
     from .atlas import srs2180
     forest = np.zeros((len(rows), len(cols)), np.uint8)
     trees, buildings, summaries = [], [], []
@@ -153,11 +153,12 @@ def scene_context(contexts, transform_context, grid, turbine, radius, rows, cols
         mask = (forest[::spacing, ::spacing] != 0) & ground_valid[np.ix_(ys, xs)] & surface_valid[np.ix_(ys, xs)]
         mask &= (gy[:, None]**2 + gx[None, :]**2 <= radius**2) & np.isfinite(heights) & (heights >= 2) & (heights <= 80)
         candidates = np.flatnonzero(mask)
-        indices = candidates[np.linspace(0, len(candidates)-1, min(2000, len(candidates)), dtype=int)] if candidates.size else []
+        tree_limit = max(100, min(10000, int(tree_limit)))
+        indices = candidates[np.linspace(0, len(candidates)-1, min(tree_limit, len(candidates)), dtype=int)] if candidates.size else []
         for index in indices:
             r, c = divmod(int(index), len(xs))
             trees.append(dict(x=float(gx[c]), y=float(gy[r]), ground=float(ground[ys[r], xs[c]]),
                               height=float(heights[r, c]), source='forest_sample'))
-        summaries.append(dict(role='korony_lasu', features=len(trees), skipped=0, truncated=len(candidates) > 2000,
+        summaries.append(dict(role='korony_lasu', features=len(trees), skipped=0, truncated=len(candidates) > tree_limit,
                               method='ilustracyjne próbki wewnątrz lasów; wysokości NMPT−NMT; nie inwentaryzacja drzew'))
     return forest.tolist(), trees, buildings, summaries

@@ -1,5 +1,5 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
-const constants=['TEXTURE_2D','RGBA','UNSIGNED_BYTE','TEXTURE_MIN_FILTER','TEXTURE_MAG_FILTER','LINEAR','TEXTURE_WRAP_S','TEXTURE_WRAP_T','CLAMP_TO_EDGE','ARRAY_BUFFER','ELEMENT_ARRAY_BUFFER','STATIC_DRAW','TRIANGLES','LINES','FLOAT','UNSIGNED_SHORT','VERTEX_SHADER','FRAGMENT_SHADER','COMPILE_STATUS','LINK_STATUS','UNPACK_FLIP_Y_WEBGL','DEPTH_TEST','POLYGON_OFFSET_FILL','COLOR_BUFFER_BIT','DEPTH_BUFFER_BIT','MAX_TEXTURE_SIZE'];
+const constants=['TEXTURE_2D','TEXTURE0','RGBA','UNSIGNED_BYTE','TEXTURE_MIN_FILTER','TEXTURE_MAG_FILTER','LINEAR','LINEAR_MIPMAP_LINEAR','TEXTURE_WRAP_S','TEXTURE_WRAP_T','CLAMP_TO_EDGE','ARRAY_BUFFER','ELEMENT_ARRAY_BUFFER','STATIC_DRAW','TRIANGLES','LINES','FLOAT','UNSIGNED_SHORT','VERTEX_SHADER','FRAGMENT_SHADER','COMPILE_STATUS','LINK_STATUS','UNPACK_FLIP_Y_WEBGL','DEPTH_TEST','POLYGON_OFFSET_FILL','COLOR_BUFFER_BIT','DEPTH_BUFFER_BIT','MAX_TEXTURE_SIZE'];
 let id=0,bound={},buffers={},matrix=null,draws=[],depth=false,gpuError=0,failUpload=false,uploadedTexture=null,locatorPhotos=0,photoUniform=null;
 const methods={};constants.forEach((key,i)=>methods[key]=i+1);
 Object.assign(methods,{
@@ -18,7 +18,7 @@ const gl=new Proxy(methods,{get:(target,name)=>name in target?target[name]:()=>{
 methods.NO_ERROR=0;methods.getError=()=>{const value=gpuError;gpuError=0;return value};
 methods.getParameter=key=>key===methods.MAX_TEXTURE_SIZE?2048:undefined;
 methods.texImage2D=(...args)=>{if(args.length===6){uploadedTexture=args[5];gpuError=failUpload?1285:0}};
-const ids=['title','info','profile','fallback','bearing','tilt','vertical','sun','projection','fov','material','cover','trees','buildings','object-view','lines','photo','show-photo','context-status','status','view','low','high','bval','tval','vval','fval','reset','save','camera','eye-height','locator','eye-status','texture-status','look-turbine','bearing-label','download-texture'];
+const ids=['title','info','profile','fallback','bearing','tilt','vertical','sun','projection','fov','material','cover','trees','buildings','object-view','forest-objects','photo-shade','photo-top','diagnostics','lines','photo','show-photo','context-status','status','view','low','high','bval','tval','vval','fval','reset','save','camera','eye-height','locator','eye-status','texture-status','look-turbine','bearing-label','download-texture'];
 for(const key of ids)elements[key]={value:{tilt:28,vertical:1,sun:300,projection:'perspective',fov:45,material:'height'}[key]??225,checked:true,style:{display:'none'},handlers:{},addEventListener(name,cb){this.handlers[name]=cb}};
 Object.assign(elements.view,{clientWidth:1600,clientHeight:1000,getContext:()=>gl,setPointerCapture(){}});
 Object.assign(elements.locator,{width:320,height:320,getContext:()=>new Proxy({drawImage(){locatorPhotos++}},{get:(target,key)=>target[key]||(()=>{}),set:()=>true}),getBoundingClientRect:()=>({left:0,top:0,width:320,height:320})});
@@ -47,10 +47,10 @@ elements.view.handlers.keydown({key:'ArrowUp',shiftKey:false,preventDefault(){}}
 if(!process.argv[2]){elements.locator.handlers.pointerdown({clientX:32,clientY:288});if(frames.length)frames.shift()();assert(elements['eye-status'].textContent.includes('X=-40.00'))}
 elements.reset.onclick();frames.shift()();
 images[0].onerror();assert(elements['texture-status'].textContent.includes('Nie można'));
-images[0].onload();frames.shift()();assert.equal(elements.photo.checked,true);assert.equal(elements.photo.disabled,false);assert(elements['texture-status'].textContent.includes('NAŁOŻONA NA MODEL 3D'));assert.equal(photoUniform,1);
+images[0].onload();frames.shift()();assert.equal(elements.photo.checked,true);assert.equal(elements.photo.disabled,false);assert(elements['texture-status'].textContent.includes('rysowanie na modelu WŁĄCZONE'));assert.equal(photoUniform,1);
 elements.material.value='cover';elements.material.handlers.input();frames.shift()();assert.equal(photoUniform,1,'Changing the palette must not turn off the photograph');
-assert(elements['texture-status'].textContent.includes('NAŁOŻONA'));
-elements.photo.checked=false;elements.photo.handlers.input();frames.shift()();assert.equal(photoUniform,0);assert(elements['texture-status'].textContent.includes('WYŁĄCZONA NA MODELU'));
+assert(elements['texture-status'].textContent.includes('WŁĄCZONE'));
+elements.photo.checked=false;elements.photo.handlers.input();frames.shift()();assert.equal(photoUniform,0);assert(elements['texture-status'].textContent.includes('WYŁĄCZONE NA MODELU'));
 elements['show-photo'].onclick();frames.shift()();assert.equal(photoUniform,1);
 if(!process.argv[2]){
  elements.cover.checked=true;elements.cover.handlers.input();frames.shift()();
@@ -61,7 +61,7 @@ if(!process.argv[2]){
  elements.buildings.checked=false;elements.buildings.handlers.input();frames.shift()();assert(elements.status.textContent.includes('0 brył budynków'));
  elements['object-view'].onclick();frames.shift()();assert.equal(elements.cover.checked,false);assert.equal(photoUniform,1);assert(elements.status.textContent.includes('1 brył budynków'));assert(elements['context-status'].textContent.includes('przerwy między symbolami'));
 }
-assert.equal(uploadedTexture.width,2048);assert.equal(uploadedTexture.height,1024,'Large image must fit the GPU limit while keeping its proportions');
+assert.equal(uploadedTexture.width,2048);assert.equal(uploadedTexture.height,2048,'Each texture dimension must fit the device and allow mipmaps');
 assert.equal(elements['download-texture'].href,context.textureData);assert.equal(elements['download-texture'].style.display,'');
 assert(locatorPhotos>0,'Decoded image must also appear in the location picker');
 images[0].naturalWidth=512;images[0].naturalHeight=512;gpuError=1280;images[0].onload();frames.shift()();

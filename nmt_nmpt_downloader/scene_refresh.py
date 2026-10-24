@@ -58,6 +58,7 @@ def refresh_scenes(report, view_options, event, context=None, scene_contexts=Non
     result['details'], result['scene_view_options'] = details, view_options
     result['scene_version'] = VERSION
     result.pop('scene_texture_error', None)
+    result.pop('scene_texture_warnings', None)
     result.pop('presentation_error', None)
     atomic_json(Path(result['report_dir']) / 'report.json', result)
     return result
