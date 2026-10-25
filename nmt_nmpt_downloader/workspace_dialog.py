@@ -298,7 +298,7 @@ class WorkspaceDialog(QDialog):
         self.texture_layer.setLayer(candidate)
         if candidate:
             self.texture_mode.setCurrentIndex(1)
-        self.texture_mode.currentIndexChanged.connect(lambda: self.texture_layer.setEnabled(self.texture_mode.currentData() == 'layer'))
+        self.texture_mode.currentIndexChanged.connect(self.enable_texture_selector)
         self.texture_layer.setEnabled(candidate is not None)
         detail_form.addRow('Źródło ortofotomapy:', self.texture_mode)
         detail_form.addRow('Warstwa zdjęcia (bez NMT/NMPT nad nim):', self.texture_layer)
@@ -413,7 +413,7 @@ class WorkspaceDialog(QDialog):
         self.report_button.clicked.connect(self.open_report)
         self.ray_button.clicked.connect(self.show_rays)
         self.profile_button.clicked.connect(lambda: self.open_detail('profile'))
-        self.scene_button.clicked.connect(lambda: self.open_detail('scene'))
+        self.scene_button.clicked.connect(self.open_visualization)
         self.rerun_button.clicked.connect(self.rerun)
         self.load_button.clicked.connect(self.load_report)
         hide.clicked.connect(self.hide)
@@ -434,6 +434,59 @@ class WorkspaceDialog(QDialog):
             combo.layerChanged.connect(self.mark_scene_dirty)
         self.texture_resolution.currentIndexChanged.connect(self.mark_scene_dirty)
         self.forest_trees.currentIndexChanged.connect(self.mark_scene_dirty)
+        from .visual_workflow import install_visual_workflow, select_scene_layers
+        install_visual_workflow(self)
+        select_scene_layers(self)
+        self.diagnostics_button = QPushButton('Pokaż dziennik zadania')
+        self.diagnostics_button.setCheckable(True)
+        self.diagnostics_button.toggled.connect(self.update_compact_progress)
+        self.layout().insertWidget(self.layout().count()-2, self.diagnostics_button)
+        self.progress_visibility = QTimer(self)
+        self.progress_visibility.setInterval(300)
+        self.progress_visibility.timeout.connect(self.update_compact_progress)
+        self.progress_visibility.start()
+        self.update_compact_progress()
+
+    def update_compact_progress(self, *args):
+        running = bool(self.task or self.export_job)
+        for widget in (self.progress, self.stats_label, self.active, self.activity_label):
+            widget.setVisible(running)
+        self.log.setVisible(self.diagnostics_button.isChecked())
+
+    def open_visualization(self):
+        if self.task or self.export_job:
+            return
+        if self.visual_source.currentData() == 'photo':
+            if self.photos.current() is None:
+                self.photos.pick()
+            elif (self.photos.current().get('dirty') or not self.photos.current().get('html') or
+                  self.photos.current().get('prepared_version') != VERSION or
+                  not (Path(self.photos.report['report_dir'])/self.photos.current()['html']).is_file()):
+                self.photos.prepare()
+            else:
+                self.photos.open_photo()
+        else:
+            self.open_detail('scene')
+
+    def update_visual_controls(self, *args):
+        from .visual_workflow import update_visual_workflow
+        update_visual_workflow(self)
+
+    def visual_source_changed(self, *args):
+        self.update_visual_controls()
+        if self.loading_scene_controls or self.task or self.export_job or not self.last_report:
+            return
+        self.last_report.setdefault('scene_view_options', {})['scene_visual_source'] = self.visual_source.currentData()
+        folder = self.report_dir or self.last_report.get('report_dir')
+        if folder:
+            from .core import atomic_json
+            try:
+                atomic_json(Path(folder)/'report.json', self.last_report)
+            except OSError as exc:
+                self.log.appendPlainText('Nie można zapisać wyboru wizualizacji: '+str(exc))
+
+    def enable_texture_selector(self, *args):
+        self.texture_layer.setEnabled(True)
 
     def mark_scene_dirty(self, *args):
         if self.loading_scene_controls:
@@ -441,11 +494,13 @@ class WorkspaceDialog(QDialog):
         self.scene_dirty = True
         if self.last_report:
             self.texture_state_label.setText('Zmieniono ustawienia. Scena 3D najpierw odświeży prezentację; mapy widoczności pozostaną bez zmian.')
+        if hasattr(self, 'visual_source'):
+            self.update_visual_controls()
 
     def texture_layer_selected(self, layer):
-        if self.loading_scene_controls or layer is None:
+        if self.loading_scene_controls:
             return
-        self.texture_mode.setCurrentIndex(self.texture_mode.findData('layer'))
+        self.texture_mode.setCurrentIndex(self.texture_mode.findData('layer' if layer is not None else 'geoportal'))
         self.scene_texture.setChecked(True)
         self.mark_scene_dirty()
 
@@ -611,11 +666,14 @@ class WorkspaceDialog(QDialog):
 
     def view_options(self):
         return dict(view_turbine=self.view_turbine.value(), view_azimuth=self.view_azimuth.value(),
+                    scene_visual_source=self.visual_source.currentData(),
+                    scene_reuse_objects=self.reuse_context.isChecked(),
                     scene_viewpoints=self.read_viewpoints(), scene_detail_radius=self.detail_radius.value(),
                     scene_initial_view=max(0, self.viewpoints.currentRow()),
                     scene_vertices=self.scene_quality.currentData(), scene_radius=self.scene_radius.value(),
                     scene_eye=self.eye.value(), scene_start_eye=self.scene_start_eye.isChecked(), scene_observer=self.scene_observer,
                     scene_context_layer_ids={role: combo.currentLayer().id() for role, combo in self.scene_layers.items() if combo.currentLayer()},
+                    scene_context_layer_names={role: combo.currentLayer().name() for role, combo in self.scene_layers.items() if combo.currentLayer()},
                     scene_texture=self.scene_texture.isChecked(), scene_texture_mode=self.texture_mode.currentData(),
                     scene_texture_resolution=self.texture_resolution.currentData(), scene_forest_trees=self.forest_trees.currentData(),
                     scene_texture_layer_id=self.texture_layer.currentLayer().id() if self.texture_layer.currentLayer() else '')
@@ -1065,6 +1123,8 @@ class WorkspaceDialog(QDialog):
         self.start_button.setEnabled(True)
         self.scene_dirty = bool(report.get('presentation_error'))
         self.update_texture_state()
+        from .visual_workflow import update_visual_workflow
+        update_visual_workflow(self)
         if report['state'] == 'completed' and not report.get('presentation_error') and not report.get('scene_texture_error'):
             if not auto_open:
                 QMessageBox.information(self, PLUGIN_NAME, text)
@@ -1106,7 +1166,7 @@ class WorkspaceDialog(QDialog):
             generated_version = self.last_report.get('scene_version', self.last_report.get('version'))
             detail = self.preferred_detail()
             missing_texture = self.scene_texture.isChecked() and detail and not detail.get('texture') and not self.last_report.get('scene_texture_error')
-            if self.scene_dirty or generated_version != VERSION or missing_texture:
+            if self.scene_dirty or generated_version != VERSION or missing_texture or not detail or not Path(detail.get('scene', '')).is_file():
                 self.open_after_scene_refresh = True
                 self.refresh_scene()
                 return
@@ -1179,6 +1239,12 @@ class WorkspaceDialog(QDialog):
             chosen_texture = QgsProject.instance().mapLayer(view.get('scene_texture_layer_id', ''))
             if chosen_texture:
                 self.texture_layer.setLayer(chosen_texture)
+            elif self.texture_layer.currentLayer() is None and self.texture_mode.currentData() == 'layer':
+                from .scene_texture import ortho_candidate
+                candidate = ortho_candidate(QgsProject.instance())
+                self.texture_layer.setLayer(candidate)
+                if candidate is None:
+                    self.texture_mode.setCurrentIndex(self.texture_mode.findData('geoportal'))
             self.update_scene_point_label()
             for key, checkbox in [('curvature', self.curvature), ('rays', self.rays), ('details', self.details),
                                   ('scene_texture', self.scene_texture)]:
@@ -1186,6 +1252,10 @@ class WorkspaceDialog(QDialog):
             for key, combo in dict(self.context_layers, **self.scene_layers).items():
                 layer_id = view.get('scene_context_layer_ids', {}).get(key, opts.get('context_layer_ids', {}).get(key, ''))
                 combo.setLayer(QgsProject.instance().mapLayer(layer_id))
+            from .visual_workflow import select_scene_layers
+            select_scene_layers(self, view.get('scene_context_layer_names', {}))
+            self.visual_source.setCurrentIndex(max(0, self.visual_source.findData(view.get('scene_visual_source', 'photo' if report.get('photo_imports') else 'model'))))
+            self.reuse_context.setChecked(bool(view.get('scene_reuse_objects', True)))
             self.auto_download.setChecked(False)
             self.report_folder.edit.setText(str(path.parent.parent))
             report['report_dir'] = str(path.parent)

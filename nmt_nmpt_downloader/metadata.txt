@@ -2,9 +2,9 @@
 name=NMT i NMTP ściągacz
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
-version=2.7.0
+version=2.8.0
 author=Projekt lokalny
-description=Atlas NMT/NMPT i zdjęcia z telefonu: aparat i kierunek klikane w QGIS, fotomontaż turbin, dopasowanie kamery, zasłanianie, eksport PNG/JSON i widoki 3D.
+description=Prosty wybór: model 3D Three.js albo fotomontaż zdjęcia. Tekstury terenu i dachów, zapisane budynki/korony, import konkretnego kadru Street View, ustawienia zaawansowane w osobnym oknie.
 about=Jeden formularz pobierania i analizy. Osobne promienie i kroki NMT/NMPT. Obserwatorzy opcjonalni. Mapy liczby widocznych turbin, trzech wysokości wirnika i braków danych, GeoTIFF/GeoPackage/CSV/JSON, atlas PDF/PNG/HTML.
 category=Raster
 icon=icon.svg

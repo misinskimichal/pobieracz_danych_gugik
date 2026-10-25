@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.7.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.8.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -23,6 +23,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Wydanie 2.6.0:** zbieranie punktów kliknięciami w QGIS, lokalny detal i przełączanie miejsc, gęstsze bliskie listowie, poglądowe materiały elewacji i dopasowanie dachów do NMPT — [instrukcja 2.6.0](Instrukcja_ATLAS_2.6.0.md).
 
 **Wydanie 2.7.0:** własne zdjęcia z telefonu, miejsce i kierunek wskazywane na mapie, fotomontaż turbin z dopasowaniem kamery, przybliżone i ręczne zasłanianie, PNG/JSON oraz odnośnik Street View — [instrukcja 2.7.0](Instrukcja_ATLAS_2.7.0.md).
+
+**Wydanie 2.8.0:** wspólny wybór modelu/fotomontażu i jeden przycisk wyniku, osobne okno zaawansowane, silnik Three.js, zachowanie zapisanych obiektów oraz import konkretnego kadru Street View z linku i opcjonalnego oficjalnego API — [instrukcja 2.8.0](Instrukcja_ATLAS_2.8.0.md).
 
 ## Spis treści
 
@@ -1796,3 +1798,12 @@ W tym samym formularzu dodano zdjęcia z telefonu: przeciągnięcie lub dwa klik
 Samodzielny HTML nakłada uproszczone przestrzenne turbiny na rzeczywiste zdjęcie. Użytkownik dopasowuje kamerę, porównuje obraz z turbinami i bez nich, korzysta z przybliżonej maski NMT/NMPT oraz ręcznie maskuje pierwszy plan. PNG ma wymiar przygotowanego zdjęcia, do 6000 px / 24 MP; oryginał jest zachowany. Dopasowanie i maskę można pobrać do JSON i wczytać w QGIS przed ponownym przygotowaniem. Fotomontaż dotyczy jednego stanowiska; nie tworzy modelu otoczenia ani panoramy.
 
 Sprawdzono repozytoria go2streetview, Street View Saccon, StreetView Pro i GoogleMapsStreetDock. Dodano jawny odnośnik do Street View dla stanowiska i kierunku, z konwersją północy siatki na geograficzną. Nie pobiera on zdjęć Google i nie wymaga klucza API. Panoramax, Mapillary i GLB pozostają planowanymi integracjami. Pełne działanie, rozwiązania techniczne, testy oraz ograniczenia opisuje [instrukcja 2.7.0](Instrukcja_ATLAS_2.7.0.md).
+
+
+## Suplement Q — wdrożone w 2.8.0: uproszczenie i Three.js
+
+Wersja 2.7.0 miała oddzielne przyciski modelu i zdjęcia, więc wybór fotografii nie zmieniał wyniku otwieranego przez Scena 3D. Zastąpiono to jawnym wyborem rodzaju obrazu i jedną akcją. Dane podstawowe są w głównym formularzu, parametry dodatkowe w osobnym oknie; analogicznie uproszczono HTML.
+
+Nowy silnik Three.js 0.184 korzysta z lokalnych materiałów terenu i dachów, oddzielnych brył i instancji koron. Pozostawiono WebGL 1 jako tryb zgodności. Przy odświeżeniu tego samego modelu można zachować prawdziwe eksportowane wcześniej obrysy i ilustracyjne korony dla brakujących warstw. Link Street View ustawia konkretną panoramę i aparat; obraz pochodzi z dostarczonego pliku lub opcjonalnego oficjalnego Static API z własnym kluczem sesyjnym.
+
+105 testów QGIS/Python oraz próby w Chromium obejmują właściwy plik, wybór wyniku, warstwy, maski i teksturę widoczną z gruntu. Osobno użyto rzeczywistych NMT/NMPT i WMS GUGiK. Nie utożsamiamy działania tekstury z fotorealistyczną rekonstrukcją ścian. Pełna [instrukcja 2.8.0](Instrukcja_ATLAS_2.8.0.md) podaje ograniczenia, źródła i warunki korzystania z Google.

@@ -25,6 +25,9 @@ def refresh_scenes(report, view_options, event, context=None, scene_contexts=Non
     for product in result['products']:
         check_cancel(event)
         resource = product['resource']
+        from .scene_saved_context import read_scene_context
+        old_detail = next((item for item in report.get('details', []) if item['model'] == resource), {})
+        options['_previous_scene_context'] = read_scene_context(old_detail.get('scene', '')) if options.get('scene_reuse_objects', True) else None
         notify(resource + ': odświeżanie 3D z zapisanych rastrów; bez pobierania i obliczeń widoczności')
         grid = Grid.around([turbine], product['radius'], product['resolution'])
         root = Path(product['paths']['count']).parent

@@ -72,9 +72,9 @@ def main():
         call('Runtime.enable')
         call('Page.enable')
         trace = """window.__glFailures=[];
-        for(const name of ['drawArrays','drawElements','uniform1f','uniform1i','uniform2fv','uniform3fv','uniform4fv','uniformMatrix4fv','vertexAttribPointer','texImage2D','generateMipmap']){
-          const original=WebGLRenderingContext.prototype[name];
-          WebGLRenderingContext.prototype[name]=function(...args){const result=original.apply(this,args),error=this.getError();if(error)window.__glFailures.push({name,error,stack:new Error().stack});return result};
+        for(const proto of [WebGLRenderingContext.prototype,WebGL2RenderingContext.prototype])for(const name of ['drawArrays','drawElements','drawElementsInstanced','uniform1f','uniform1i','uniform2fv','uniform3fv','uniform4fv','uniformMatrix4fv','vertexAttribPointer','texImage2D','texStorage2D','texSubImage2D','generateMipmap']){
+          const original=proto[name];if(typeof original!=='function')continue;
+          proto[name]=function(...args){const result=original.apply(this,args),error=this.getError();if(error)window.__glFailures.push({name,error,stack:new Error().stack});return result};
         }"""
         if os.environ.get('SCENE_TRACE_GL'):
             call('Page.addScriptToEvaluateOnNewDocument', dict(source=trace))
@@ -89,6 +89,9 @@ def main():
             assert time.monotonic() < deadline, state
             time.sleep(.2)
         assert state['tiles_loaded'] == state['tiles_expected'] > 0, state
+        if os.environ.get('SCENE_EXPECT_THREE'):
+            assert state.get('renderer', '').startswith('Three.js'), state
+            assert state.get('mapped_meshes', 0) > 0, state
         assert not state['tile_errors'] and state['gl_error'] == 0, state
 
         def frame(name, code=''):
@@ -123,9 +126,10 @@ def main():
             switches.append(switched)
             evaluate(f'document.getElementById("viewpoint").value={valid_views[0]};document.getElementById("viewpoint").dispatchEvent(new Event("change"))')
             switches.append(wait_images())
-        assert evaluate('document.getElementById("view").sceneDiagnostics().forest_presentation')
-        continuous = frame('continuous_nmpt', 'document.getElementById("forest-objects").checked=false;document.getElementById("forest-objects").dispatchEvent(new Event("input"))')
-        assert np.count_nonzero(np.max(np.abs(photo-continuous), axis=2) > 10) > 1000
+        if not os.environ.get('SCENE_SURFACE_ONLY'):
+            assert evaluate('document.getElementById("view").sceneDiagnostics().forest_presentation')
+            continuous = frame('continuous_nmpt', 'document.getElementById("forest-objects").checked=false;document.getElementById("forest-objects").dispatchEvent(new Event("input"))')
+            assert np.count_nonzero(np.max(np.abs(photo-continuous), axis=2) > 10) > 1000
         frame('top_photo', 'document.getElementById("photo-top").click()')
         final = evaluate('document.getElementById("view").sceneDiagnostics()')
         if os.environ.get('SCENE_TRACE_GL'):

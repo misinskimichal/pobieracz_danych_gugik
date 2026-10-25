@@ -27,6 +27,169 @@ from nmt_nmpt_downloader.photo_panel import bearing_on_grid, camera_adjustment, 
 
 
 class PhotoTests(unittest.TestCase):
+    def test_street_reference_positions_the_imported_image_and_selects_the_photo_output(self):
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        from nmt_nmpt_downloader.street_reference import street_reference
+        window = QMainWindow()
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+
+        view = WorkspaceDialog(Iface())
+        try:
+            view.last_report = self.report
+            view.photos.attach_report(self.report)
+            view.photos.street_key.setText('session-only-secret')
+            reference = street_reference('https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=52.23,21.01&pano=EXACT&heading=123&pitch=2&fov=75')
+            view.photos.add_street_record(reference, str(self.image))
+            photo = view.photos.current()
+            self.assertEqual(view.visual_source.currentData(), 'photo')
+            self.assertEqual(photo['fov'], 75)
+            self.assertTrue(115 < photo['heading'] < 130)
+            self.assertIn('pano=EXACT', streetview_url(photo, QgsProject.instance().transformContext()))
+            self.assertNotIn('session-only-secret', (self.root/'report.json').read_text())
+        finally:
+            view.deleteLater()
+
+    def test_named_building_and_forest_layers_are_selected_but_parcels_are_not(self):
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        from qgis.core import QgsVectorLayer
+        forest = QgsVectorLayer('Polygon?crs=EPSG:2180', 'OT_PTLZ_A', 'memory')
+        building = QgsVectorLayer('Polygon?crs=EPSG:2180', 'OT_BUBD_A', 'memory')
+        parcels = QgsVectorLayer('Polygon?crs=EPSG:2180', 'działki', 'memory')
+        QgsProject.instance().addMapLayers([forest, building, parcels])
+        window = QMainWindow()
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+
+        view = WorkspaceDialog(Iface())
+        try:
+            self.assertIs(view.scene_layers['lasy'].currentLayer(), forest)
+            self.assertIs(view.scene_layers['budynki_3d'].currentLayer(), building)
+            self.assertTrue(view.texture_layer.isEnabled())
+        finally:
+            view.deleteLater()
+
+    def test_street_link_identifies_an_exact_panorama_and_rejects_a_map_link(self):
+        from nmt_nmpt_downloader.street_reference import street_reference
+        reference = street_reference('https://www.google.com/maps/@52.23,21.01,3a,75y,123.5h,88t/data=!3m7!1e1!3m5!1sEXACT_panorama-123!2e0')
+        self.assertEqual(reference['pano'], 'EXACT_panorama-123')
+        self.assertEqual(reference['heading'], 123.5)
+        self.assertEqual(reference['pitch'], 2)
+        self.assertIn('pano=EXACT_panorama-123', reference['url'])
+        for invalid in ['https://www.google.com/maps/@52.23,21.01,12z', 'https://maps.app.goo.gl/short', 'https://example.org/maps/@52.23,21.01,3a,75y']:
+            with self.assertRaises(ValueError):
+                street_reference(invalid)
+
+    def test_street_api_fetches_the_selected_frame_and_never_returns_the_key(self):
+        from nmt_nmpt_downloader.street_reference import fetch_street_frame, street_reference
+        reference = street_reference('https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=52.23,21.01&pano=EXACT&heading=123&pitch=2&fov=75')
+        calls = []
+        metadata = dict(status='OK', pano_id='EXACT', location=dict(lat=52.231, lng=21.011), date='2024-06', copyright='Google')
+        image = self.image.read_bytes()
+
+        class Response:
+            status_code = 200
+            def __init__(self, data): self.content = data
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def iter_content(self, count): return iter([self.content])
+
+        class Session:
+            def get(self, url, **kwargs):
+                calls.append((url, kwargs['params']))
+                return Response(json.dumps(metadata).encode() if url.endswith('/metadata') else image)
+
+        destination = self.root/'street.jpg'
+        result = fetch_street_frame(reference, 'private-test-key', destination, self.event, Session())
+        self.assertEqual(destination.read_bytes(), image)
+        self.assertEqual(calls[1][1]['pano'], 'EXACT')
+        self.assertEqual(calls[1][1]['heading'], 123)
+        self.assertNotIn('private-test-key', json.dumps(result))
+        self.assertIn('EXACT', result['url'])
+        self.assertEqual(result['lat'], 52.231)
+
+    def test_one_visual_action_routes_the_selected_photo_and_model_without_duplicate_main_buttons(self):
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        window = QMainWindow()
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return None
+
+        record = prepare_photo(self.report, self.config, self.event)
+        self.report['photo_imports'] = [record]
+        view = WorkspaceDialog(Iface())
+        try:
+            view.last_report = self.report
+            view.photos.attach_report(self.report, restore=True)
+            view.visual_source.setCurrentIndex(view.visual_source.findData('photo'))
+            with patch('nmt_nmpt_downloader.photo_panel.QDesktopServices.openUrl') as browser:
+                view.open_visualization()
+                self.assertTrue(browser.call_args.args[0].toLocalFile().endswith('/fotomontaz.html'))
+            with patch.object(view, 'open_detail') as model:
+                view.visual_source.setCurrentIndex(view.visual_source.findData('model'))
+                view.open_visualization()
+                model.assert_called_once_with('scene')
+            self.assertTrue(view.photos.isHidden())
+            self.assertFalse(view.visual_settings.isVisible())
+            self.assertTrue(view.photos.prepare_button.parentWidget().isHidden())
+            self.assertTrue(view.refresh_scene_button.isHidden())
+            view.visual_source.setCurrentIndex(view.visual_source.findData('photo'))
+            view.photos.save_records()
+            stored = json.loads((self.root/'report.json').read_text())
+            self.assertEqual(stored['scene_view_options']['scene_visual_source'], 'photo')
+        finally:
+            view.deleteLater()
+
+    def test_saved_buildings_and_forest_are_retained_without_original_project_layers(self):
+        from nmt_nmpt_downloader.atlas_details import write_details
+        from nmt_nmpt_downloader.scene_refresh import refresh_scenes
+        from qgis.core import QgsFeature, QgsGeometry, QgsVectorLayer, QgsVectorLayerFeatureSource, QgsCoordinateTransformContext
+        turbine = dict(id='A', x=500250, y=500250, hub=100, diameter=120)
+        model = self.report['products'][0]
+        model['radius'] = 200
+        self.report['turbines'] = [turbine]
+        forest = QgsVectorLayer('Polygon?crs=EPSG:2180', 'PTLZ', 'memory')
+        building = QgsVectorLayer('Polygon?crs=EPSG:2180', 'BUBD', 'memory')
+        for layer, wkt in [(forest, 'POLYGON((500100 500115,500180 500115,500180 500125,500100 500125,500100 500115))'),
+                           (building, 'POLYGON((500290 500115,500310 500115,500310 500125,500290 500125,500290 500115))')]:
+            feature = QgsFeature()
+            feature.setGeometry(QgsGeometry.fromWkt(wkt))
+            layer.dataProvider().addFeatures([feature])
+        context = QgsCoordinateTransformContext()
+        options = dict(eye=1.7, curvature=False, scene_vertices=257)
+        detail = write_details(self.root, model, self.grid, turbine, self.ground, np.ones(self.ground.shape, bool),
+                               self.cover, np.ones(self.cover.shape, bool), 100, options, self.event,
+                               {r:(QgsVectorLayerFeatureSource(l), l.crs()) for r,l in [('lasy', forest), ('budynki_3d', building)]}, context)
+        self.report['details'] = [detail]
+        old_path = Path(detail['scene'])
+        old_text = old_path.read_text()
+        old_payload = re.search(r'const scene=(.*?);\n', old_text).group(1)
+        legacy = json.loads(old_payload)
+        legacy.pop('building_mask', None)
+        old_path.write_text(old_text.replace(old_payload, json.dumps(legacy)))
+        before = hashlib.sha256((self.root/'NMPT'/'count.tif').read_bytes()).hexdigest()
+        result = refresh_scenes(self.report, dict(view_turbine=1, scene_vertices=257), self.event, context, {})
+        payload = json.loads(re.search(r'const scene=(.*?);\n', Path(result['details'][0]['scene']).read_text()).group(1))
+        self.assertTrue(result['details'][0]['context_reused'])
+        self.assertTrue(payload['trees'])
+        self.assertTrue(payload['buildings'])
+        self.assertTrue(any(any(row) for row in payload['building_mask']))
+        self.assertTrue(any(any(row) for row in payload['forest']))
+        self.assertEqual(before, hashlib.sha256((self.root/'NMPT'/'count.tif').read_bytes()).hexdigest())
+        partial = refresh_scenes(result, dict(view_turbine=1, scene_vertices=257), self.event, context,
+                                 {'lasy':(QgsVectorLayerFeatureSource(forest), forest.crs())})
+        partial_payload = json.loads(re.search(r'const scene=(.*?);\n', Path(partial['details'][0]['scene']).read_text()).group(1))
+        self.assertTrue(partial_payload['buildings'])
+        cleared = refresh_scenes(partial, dict(view_turbine=1, scene_vertices=257, scene_reuse_objects=False), self.event, context, {})
+        cleared_payload = json.loads(re.search(r'const scene=(.*?);\n', Path(cleared['details'][0]['scene']).read_text()).group(1))
+        self.assertFalse(cleared_payload['buildings'])
+        self.assertFalse(cleared_payload['trees'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

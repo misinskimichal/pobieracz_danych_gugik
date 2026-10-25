@@ -501,6 +501,10 @@ class TerrainPlugin:
                 self.visibility_dialog.task.cancel()
             self.visibility_dialog.hide()
         if self.dialog:
+            if getattr(self.dialog, 'progress_visibility', None):
+                self.dialog.progress_visibility.stop()
+            if getattr(self.dialog, 'visual_settings', None):
+                self.dialog.visual_settings.hide()
             if hasattr(self.dialog, 'photos'):
                 self.dialog.photos.stop_picker(show=False)
             if hasattr(self.dialog, 'stop_scene_picker'):

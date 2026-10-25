@@ -265,10 +265,18 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
                    ground_z=float(ground_z) if np.isfinite(ground_z) else None, hub=turbine['hub'], diameter=turbine['diameter'],
                    eye=float(data['eye_z']) if np.isfinite(data['eye_z']) else None,
                    observer=[data['observer_x'] - turbine['x'], data['observer_y'] - turbine['y']], status=data['status'])
+    from .scene_saved_context import reuse_scene_context
+    reused = reuse_scene_context(payload, options.get('_previous_scene_context'), (scene_contexts or {}).keys())
+    if reused:
+        context_summary = payload['context_summary']
     scene = folder / ('scena_3d_' + spec['resource'] + '.html')
     template = Path(__file__).with_name('scene3d.html').read_text(encoding='utf-8')
     template = template.replace('/*SCENE_RENDERER*/', Path(__file__).with_name('scene_webgl.js').read_text(encoding='utf-8'))
     template = template.replace('/*SCENE_APPEARANCE*/', Path(__file__).with_name('scene_appearance.js').read_text(encoding='utf-8'))
+    license_text = Path(__file__).with_name('THREE_LICENSE.txt').read_text(encoding='utf-8')
+    runtime = '/* Three.js licence\n'+license_text+'\n*/\n'+Path(__file__).with_name('three_runtime.js').read_text(encoding='utf-8')
+    template = template.replace('/*THREE_RUNTIME*/', runtime)
+    template = template.replace('/*THREE_RENDERER*/', Path(__file__).with_name('scene_three.js').read_text(encoding='utf-8'))
     # Avoid closing an inline script if a user-supplied source ID contains HTML.
     serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')
     scene.write_text(template.replace('/*SCENE_DATA*/', serialized), encoding='utf-8')
@@ -286,6 +294,7 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     fallback.write_text(legacy.replace('/*SCENE_DATA*/', json.dumps(light, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')), encoding='utf-8')
     bounds = [grid.xmin+x0*grid.step, grid.ymax-y1*grid.step, grid.xmin+x1*grid.step, grid.ymax-y0*grid.step]
     return dict(model=spec['resource'], turbine=str(turbine['id']), profile=str(profile_path), scene=str(scene),
+                context_reused=reused,
                 fallback_scene=str(fallback), scene_bounds=bounds, scene_radius=radius, vertices=[len(cols), len(rows)],
                 context_summary=context_summary, texture_plan=texture_plan, azimuth=data['azimuth'], preview_step_m=grid.step * stride,
                 viewpoints=[dict(name=view['name'], point=view['point'], eye=view['eye'], error=view.get('error'),

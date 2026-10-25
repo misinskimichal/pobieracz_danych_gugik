@@ -366,4 +366,4 @@ function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
   if(s.start_eye){$('camera').value='eye';cameraMode()}schedule();
 }
 if(typeof module!=='undefined'&&module.exports)module.exports={heightColor,multiply,lookAt,projection,terrainTile,vertexShader,fragmentShader,surfaceAt,eyePose,displaySurface,shadowAllowed};
-if(typeof document!=='undefined'){try{startScene(scene,textureData,typeof textureTiles==='undefined'?[]:textureTiles,typeof textureTileIssues==='undefined'?[]:textureTileIssues)}catch(error){document.getElementById('status').textContent='Nie udało się otworzyć WebGL: '+error.message+'. Użyj lekkiego podglądu.'}}
+if(typeof document!=='undefined'&&(typeof preferThree==='undefined'||!preferThree)){try{startScene(scene,textureData,typeof textureTiles==='undefined'?[]:textureTiles,typeof textureTileIssues==='undefined'?[]:textureTileIssues)}catch(error){document.getElementById('status').textContent='Nie udało się otworzyć WebGL: '+error.message+'. Użyj lekkiego podglądu.'}}

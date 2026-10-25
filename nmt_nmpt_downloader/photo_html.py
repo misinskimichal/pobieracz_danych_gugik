@@ -23,11 +23,12 @@ details{padding:12px 24px;max-width:1200px}summary{cursor:pointer}#progress{colo
 <div class="tools">
 <label>Kierunek <input id="heading" type="number" min="0" max="360" step="0.1">°</label>
 <label>Pochylenie <input id="pitch" type="number" min="-85" max="85" step="0.1">°</label>
-<label>Przechylenie <input id="roll" type="number" min="-45" max="45" step="0.1">°</label>
 <label>Poziomy kąt widzenia <input id="fov" type="number" min="10" max="140" step="0.1">°</label>
-<button id="aim">Patrz na najbliższą turbinę</button><button id="reset">Przywróć ustawienia</button>
-</div><div class="tools">
 <label><input id="turbines" type="checkbox" checked>Pokaż turbiny</label>
+<button id="save">Zapisz fotomontaż PNG</button><button id="settings">Zapisz dopasowanie JSON</button><span id="progress"></span>
+</div><details><summary>Dopasowanie i zasłanianie · ustawienia zaawansowane</summary><div class="tools">
+<label>Przechylenie <input id="roll" type="number" min="-45" max="45" step="0.1">°</label>
+<button id="aim">Patrz na najbliższą turbinę</button><button id="reset">Przywróć ustawienia</button>
 <label><input id="occlusion" type="checkbox" checked>Zasłanianie modelem</label>
 <label><input id="guides" type="checkbox">Poziom i celownik</label>
 <label><input id="labels" type="checkbox">Numery turbin</label>
@@ -39,8 +40,7 @@ details{padding:12px 24px;max-width:1200px}summary{cursor:pointer}#progress{colo
 <label>Pędzel <input id="brush" type="range" min="2" max="100" value="20">px podglądu</label>
 <label><input id="show-mask" type="checkbox" checked>Pokaż maskę</label>
 <button id="undo">Cofnij maskę</button><button id="clear">Usuń maskę</button>
-<button id="save">Zapisz fotomontaż PNG</button><button id="settings">Zapisz dopasowanie JSON</button><span id="progress"></span>
-</div><div id="status">Wczytywanie własnego zdjęcia…</div><div id="warnings"></div>
+</div></details><div id="status">Wczytywanie własnego zdjęcia…</div><div id="warnings"></div>
 <div class="stage"><canvas id="photo" aria-label="Własne zdjęcie z modelem turbin"></canvas></div><div id="summary"></div>
 <details><summary>Jak dopasować zdjęcie i zachować wynik</summary>
 <p>Najpierw dopasuj kierunek, pochylenie i przechylenie; potem poziomy kąt widzenia. Wstępna ogniskowa EXIF nie uwzględnia wszystkich korekcji i kadrowania telefonu. Celownik oznacza oś aparatu, a linia poziomu kąt 0° — nie odtworzony horyzont terenu.</p>

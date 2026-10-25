@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.7.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.8.0
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.7.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.8.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -47,7 +47,7 @@ WCS GUGiK dostarcza numeryczny ASCII, lokalnie kompresowany do GeoTIFF Float32 w
 
 Kod: `workspace_dialog.py` — jedyny formularz; `atlas.py` — koła i rastry; `atlas_context.py` — ekspozycja; `atlas_presentation.py` — style i eksport; `engine.py`/`core.py`/`catalog.py` — transfer; `coverage.py` — indeksy. Starsze moduły linii pozostają pomocniczo w kodzie, lecz ich okno nie jest rejestrowane w menu.
 
-Licencja GPL-3.0. Pełna instrukcja i walidacja: `docs/Instrukcja_ATLAS_2.1.0.md` w repozytorium.
+Licencja GPL-3.0. Pełna instrukcja i walidacja: `docs/Instrukcja_ATLAS_2.8.0.md` w repozytorium.
 
 
 ## Nowości 2.1.0: promienie, przekrój i scena 3D
@@ -76,6 +76,14 @@ Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_N
 
 [Dokładna instrukcja i omówienie inspiracji z PDF](../docs/Instrukcja_ATLAS_2.2.0.md). Nowe pliki wyniku: `raport.gpkg`, `scena_3d_lekka_*.html` i opcjonalnie `tekstura_*.png`. Szczegółowa scena zawiera obraz w sobie. Modeli, cache i raportów użytkownika nie ma w ZIP-ie instalacyjnym.
 
+
+## Wydanie 2.8.0 — prosty wybór i nowy silnik 3D
+
+W części Wizualizacja wybierz **Model 3D** albo **Fotomontaż**. Jeden przycisk tworzy lub otwiera właściwy wynik. Dodanie zdjęcia automatycznie wybiera fotomontaż. W modelu 3D podstawowe wejścia to ortofotomapa, lasy i obrysy budynków oraz miejsca patrzenia; parametry techniczne są w osobnym oknie. Dziennik jest rozwijany, postęp pokazuje się podczas pracy. W przeglądarce również schowano zaawansowane kontrolki.
+
+Model korzysta z lokalnego Three.js 0.184: tekstury bloków terenu i dachów, oddzielne bryły, instancje koron i automatyczne zarządzanie głębokością. Przy ponownym przygotowaniu można zachować obiekty ze starej sceny, gdy ich warstw brakuje w projekcie. Rozpoznawane nazwy PTLZ/BUBD pomagają ustawić źródła. Brak obrysów nie jest automatyczną rekonstrukcją domów ze zdjęć dachów; ciągła powierzchnia NMPT ma takie ograniczenie także w nowym silniku.
+
+**Dodaj widok Street View z linku** odczytuje konkretną panoramę, położenie i kadr. Bez klucza wskaż plik tego kadru; opcjonalny własny klucz Static API pozwala pobrać 640×480 w tle. Klucz pozostaje tylko w bieżącej sesji. Zwykły link mapy jest odrzucany. Własne zdjęcia i model 3D nie potrzebują usług Google ani PyQtWebEngine. [Instrukcja 2.8.0](../docs/Instrukcja_ATLAS_2.8.0.md) opisuje aktualny przebieg, testy i granice jakości.
 
 ## Wydanie 2.7.0 — własne zdjęcie z telefonu
 

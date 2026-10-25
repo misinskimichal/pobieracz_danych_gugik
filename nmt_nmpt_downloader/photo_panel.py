@@ -5,12 +5,13 @@ import math
 from pathlib import Path
 import threading
 import time
+import uuid
 from urllib.parse import urlencode
 
 from qgis.PyQt.QtCore import Qt, QUrl, QVariant, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices, QImageReader, QPixmap
 from qgis.PyQt.QtWidgets import (QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout,
-                                 QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+                                 QGroupBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton,
                                  QVBoxLayout, QWidget)
 from qgis.core import (QgsAction, QgsApplication, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
                        QgsDistanceArea, QgsFeature, QgsField, QgsGeometry, QgsMarkerSymbol, QgsPointXY,
@@ -45,6 +46,36 @@ class PhotoTask(QgsTask):
         self.completed.emit(self.result or dict(error='Nie ukończono przygotowania zdjęcia'))
 
 
+class StreetFrameTask(QgsTask):
+    message = pyqtSignal(str)
+    completed = pyqtSignal(object)
+
+    def __init__(self, reference, key, destination):
+        super().__init__('Wybrany kadr Street View · oficjalne API', QgsTask.CanCancel)
+        self.reference, self.key, self.destination = reference, key, destination
+        self.event, self.result = threading.Event(), None
+
+    def run(self):
+        from .street_reference import fetch_street_frame
+        try:
+            self.message.emit('Street View: sprawdzanie konkretnej panoramy i pobieranie kadru…')
+            reference = fetch_street_frame(self.reference, self.key, self.destination, self.event)
+            self.result = dict(reference=reference, filename=str(self.destination))
+            return True
+        except Exception as exc:
+            self.result = dict(error=str(exc).replace(self.key, '[klucz]') if self.key else str(exc))
+            return False
+        finally:
+            self.key = ''
+
+    def cancel(self):
+        self.event.set()
+        super().cancel()
+
+    def finished(self, success):
+        self.completed.emit(self.result or dict(error='Anulowano pobieranie kadru'))
+
+
 def bearing_on_grid(start, end, source_crs, context):
     transform = QgsCoordinateTransform(source_crs, QgsCoordinateReferenceSystem('EPSG:2180'), context)
     a, b = transform.transform(start), transform.transform(end)
@@ -55,6 +86,8 @@ def bearing_on_grid(start, end, source_crs, context):
 
 def streetview_url(photo, context):
     """An explicit external link, not a Google image downloader. Convert grid to true bearing."""
+    if photo.get('street_reference'):
+        return photo['street_reference']['url']
     transform = QgsCoordinateTransform(QgsCoordinateReferenceSystem('EPSG:2180'), QgsCoordinateReferenceSystem('EPSG:4326'), context)
     p = QgsPointXY(photo['x'], photo['y'])
     angle = math.radians(photo['heading'])
@@ -97,6 +130,9 @@ class PhotoPanel(QGroupBox):
         self.add_button = QPushButton('Dodaj zdjęcie na mapie · wskaż aparat i kierunek')
         self.add_button.clicked.connect(lambda: self.pick())
         form.addRow(self.add_button)
+        self.street_import_button = QPushButton('Dodaj widok Street View z linku…')
+        self.street_import_button.clicked.connect(self.import_street)
+        form.addRow(self.street_import_button)
         note = QLabel('Przeciągnij od miejsca aparatu w kierunku kadru albo kliknij te dwa miejsca. Potem wybierz oryginalny JPG/PNG. Escape / prawy przycisk anuluje. Zwykłe zdjęcia perspektywiczne; panoramę telefonu i HEIC wyeksportuj lub zastąp zwykłym JPG.')
         note.setWordWrap(True)
         form.addRow(note)
@@ -153,6 +189,10 @@ class PhotoPanel(QGroupBox):
         self.street_button = QPushButton('Otwórz Street View w tym miejscu i kierunku · przeglądarka')
         self.street_button.clicked.connect(self.open_streetview)
         form.addRow(self.street_button)
+        self.street_key = QLineEdit()
+        self.street_key.setEchoMode(QLineEdit.Password)
+        self.street_key.setPlaceholderText('Opcjonalny własny klucz Street View Static API · tylko bieżąca sesja')
+        form.addRow('Klucz do pobrania kadru Google:', self.street_key)
         remove = QPushButton('Usuń zdjęcie z zestawu (zachowaj pliki)')
         remove.clicked.connect(self.remove)
         form.addRow(remove)
@@ -244,6 +284,8 @@ class PhotoPanel(QGroupBox):
         self.open_button.setEnabled(bool(current and current.get('html') and not current.get('dirty')))
         self.street_button.setEnabled(bool(current))
         self.adjust_button.setEnabled(bool(current))
+        from .visual_workflow import update_visual_workflow
+        update_visual_workflow(self.owner)
 
     def attach_report(self, report, restore=False):
         rebased = not restore and self.report and self.report.get('report_dir') != report.get('report_dir')
@@ -346,6 +388,8 @@ class PhotoPanel(QGroupBox):
                                                       resource='NMPT' if not self.report or any(p['resource'] == 'NMPT' for p in self.report.get('products', [])) else 'NMT',
                                                       fov_pending=True, dirty=True)))
             self.refresh_list(self.list.currentIndex() if replacing else len(self.records) - 1)
+            if hasattr(self.owner, 'visual_source'):
+                self.owner.visual_source.setCurrentIndex(self.owner.visual_source.findData('photo'))
             self.save_records()
         except Exception as exc:
             self.stop_picker()
@@ -378,6 +422,8 @@ class PhotoPanel(QGroupBox):
             return
         if self.report and not self.owner.task and not self.owner.export_job:
             self.report['photo_imports'] = self.configs()
+            if hasattr(self.owner, 'visual_source'):
+                self.report.setdefault('scene_view_options', {})['scene_visual_source'] = self.owner.visual_source.currentData()
             try:
                 if self.report.get('products') and (self.report.get('presentation') or any(p.get('html') for p in self.records)):
                     from .atlas_presentation import make_html
@@ -556,3 +602,75 @@ class PhotoPanel(QGroupBox):
     def open_streetview(self):
         if self.current():
             QDesktopServices.openUrl(QUrl(streetview_url(self.current(), QgsProject.instance().transformContext())))
+
+    def import_street(self):
+        if self.busy() or len(self.records) >= MAX_PHOTOS:
+            return
+        from .street_reference import street_reference
+        value, ok = QInputDialog.getText(self, 'Widok Street View', 'Wklej pełny adres wybranej panoramy z paska przeglądarki.\nLink ustawi aparat i kierunek. Bez klucza API wybierzesz plik JPG/PNG tego kadru.')
+        if not ok or not value:
+            return
+        try:
+            reference = street_reference(value)
+            key = self.street_key.text().strip()
+            if key:
+                if not self.report:
+                    raise ValueError('Najpierw wczytaj atlas, aby zapisać pobrany kadr w jego folderze')
+                folder = Path(self.report['report_dir']) / 'zdjecia_terenowe'
+                folder.mkdir(exist_ok=True)
+                task = StreetFrameTask(reference, key, folder / ('import_' + uuid.uuid4().hex + '.jpg'))
+                self.owner.task = task
+                task.message.connect(self.owner.stage.setText)
+                task.completed.connect(self.street_imported)
+                self.owner.inputs.setEnabled(False)
+                self.owner.start_button.setEnabled(False)
+                self.owner.cancel_button.setEnabled(True)
+                self.owner.progress.setRange(0, 0)
+                self.owner.stats_label.setText('Street View Static API · kadr 640 × 480 px')
+                self.owner.active.setRowCount(0)
+                self.owner.clock_started = time.monotonic()
+                self.owner.clock.start()
+                QgsApplication.taskManager().addTask(task)
+            else:
+                filename, _ = QFileDialog.getOpenFileName(self, 'Wybierz plik wybranego kadru Street View (JPG/PNG)', '', 'Zdjęcia (*.jpg *.jpeg *.png *.JPG *.PNG)')
+                if filename:
+                    inspect_photo(filename)
+                    self.add_street_record(reference, filename)
+        except Exception as exc:
+            QMessageBox.warning(self, PLUGIN_NAME, str(exc))
+
+    def street_imported(self, result):
+        self.owner.task = None
+        self.owner.inputs.setEnabled(True)
+        self.owner.start_button.setEnabled(True)
+        self.owner.cancel_button.setEnabled(False)
+        self.owner.clock.stop()
+        self.owner.progress.setRange(0, 100)
+        if result.get('error'):
+            self.owner.progress.setValue(0)
+            QMessageBox.warning(self, PLUGIN_NAME, result['error'])
+            return
+        self.owner.progress.setValue(100)
+        try:
+            self.add_street_record(result['reference'], result['filename'])
+            self.owner.stage.setText('Dodano wybrany kadr Street View. Kliknij Utwórz fotomontaż, aby nałożyć turbiny.')
+        except Exception as exc:
+            QMessageBox.warning(self, PLUGIN_NAME, 'Nie można ustawić kadru: ' + str(exc))
+
+    def add_street_record(self, reference, filename):
+        context = QgsProject.instance().transformContext()
+        measure = QgsDistanceArea()
+        measure.setSourceCrs(QgsCoordinateReferenceSystem('EPSG:4326'), context)
+        measure.setEllipsoid('GRS80')
+        p = QgsPointXY(reference['lon'], reference['lat'])
+        end = measure.computeSpheroidProject(p, 100, math.radians(reference['heading']))
+        x, y, heading = bearing_on_grid(p, end, QgsCoordinateReferenceSystem('EPSG:4326'), context)
+        self.records.append(photo_config(dict(name='Street View ' + (reference.get('date') or str(len(self.records) + 1)),
+                                              image_path=str(Path(filename).resolve()), x=x, y=y, heading=heading,
+                                              pitch=reference['pitch'], fov=reference['fov'], eye=2.5, fov_pending=False,
+                                              street_reference=reference, fov_source='Kadr z linku Street View · sprawdź pole widzenia i wysokość kamery', dirty=True,
+                                              resource='NMPT' if not self.report or any(p['resource'] == 'NMPT' for p in self.report.get('products', [])) else 'NMT')))
+        self.refresh_list(len(self.records) - 1)
+        if hasattr(self.owner, 'visual_source'):
+            self.owner.visual_source.setCurrentIndex(self.owner.visual_source.findData('photo'))
+        self.save_records()

@@ -4,6 +4,8 @@ Stan weryfikacji: 24 października 2026. Dokument opisuje **proponowane integrac
 
 Aktualizacja z 25 października: **własne zdjęcia i poglądowy fotomontaż turbin wdrożono w 2.7.0** — [instrukcja i ograniczenia](Instrukcja_ATLAS_2.7.0.md). Automatyczne źródła Panoramax/Mapillary, panoramy 360° i importer GLB opisane poniżej pozostają planem.
 
+W [2.8.0](Instrukcja_ATLAS_2.8.0.md) uproszczono wybór zdjęcia/modelu, wdrożono lokalny Three.js 0.184 oraz link konkretnej panoramy i opcjonalne pobranie kadru przez oficjalne Street View Static API z własnym kluczem. Nie oznacza to wdrożenia pozostałych planowanych dostawców ani fotogrametrycznej rekonstrukcji otoczenia.
+
 ## Co najbardziej poprawi widok z poziomu gruntu
 
 Ortofotomapa pokazuje przede wszystkim dachy i korony drzew. Jej nałożenie na teren nie odtwarza wyglądu ścian, pni ani przestrzeni pod drzewami. Gęstsze symbole lasu mogą poprawić prezentację, ale nie zastąpią rzeczywistych zdjęć.
