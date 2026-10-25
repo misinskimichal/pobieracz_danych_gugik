@@ -2013,5 +2013,12 @@ class AtlasTests(unittest.TestCase):
             canvas.deleteLater()
 
 
+from tests_nmt_nmpt import photo_cases  # noqa: E402
+
+
+class PhotoTests(photo_cases.PhotoTests):
+    """Share this module's application lifetime and tearDownModule with the other GIS cases."""
+
+
 if __name__ == '__main__':
     unittest.main()

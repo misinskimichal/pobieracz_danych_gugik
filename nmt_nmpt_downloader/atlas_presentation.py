@@ -480,6 +480,17 @@ def make_html(report, presentation):
         profile, scene = html.escape(Path(item['profile']).name), html.escape(Path(item['scene']).name)
         text += (f'<h2>{html.escape(item["model"])} · przekrój i scena 3D</h2><nav><a href="{scene}">Obróć scenę 3D</a>'
                  f'<a href="{profile}">Otwórz przekrój</a></nav><img src="{profile}" alt="Przekrój terenu i linii widzenia">')
+    photos = []
+    for photo in report.get('photo_imports', []):
+        identifier = str(photo.get('id', ''))
+        if not identifier or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in identifier):
+            continue
+        link = Path('zdjecia_terenowe') / identifier / 'fotomontaz.html'
+        if (folder / link).is_file():
+            label = html.escape(photo.get('name', 'Zdjęcie')) + (' · ustawienia zmienione, przygotuj ponownie' if photo.get('dirty') else '')
+            photos.append(f'<a href="{link.as_posix()}">{label}</a>')
+    if photos:
+        text += '<h2>Zdjęcia terenowe · fotomontaże turbin</h2><nav>' + ''.join(photos) + '</nav>'
     text += f'<footer>NMT i NMTP ściągacz {VERSION} · mapy i dane pozostają w tym folderze. Zachowaj cały katalog, aby HTML działał także bez internetu.</footer></main></html>'
     (folder / 'atlas.html').write_text(text, encoding='utf-8')
     presentation['html'] = str(folder / 'atlas.html')

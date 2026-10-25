@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.6.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.7.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -21,6 +21,8 @@ Dokument opisuje działającą implementację i osobno proponowane rozszerzenia.
 **Wydanie 2.5.0:** WMS/WMTS do szczegółowych lokalnych kafli i mozaiki QGIS, filtrowanie obrazu z poziomu oczu, widoczne korony zamiast powierzchni lasu i test w prawdziwym Chromium — [instrukcja 2.5.0](Instrukcja_ATLAS_2.5.0.md).
 
 **Wydanie 2.6.0:** zbieranie punktów kliknięciami w QGIS, lokalny detal i przełączanie miejsc, gęstsze bliskie listowie, poglądowe materiały elewacji i dopasowanie dachów do NMPT — [instrukcja 2.6.0](Instrukcja_ATLAS_2.6.0.md).
+
+**Wydanie 2.7.0:** własne zdjęcia z telefonu, miejsce i kierunek wskazywane na mapie, fotomontaż turbin z dopasowaniem kamery, przybliżone i ręczne zasłanianie, PNG/JSON oraz odnośnik Street View — [instrukcja 2.7.0](Instrukcja_ATLAS_2.7.0.md).
 
 ## Spis treści
 
@@ -1785,3 +1787,12 @@ Folder zachowuje mozaikę tła i osobne VRT lokalnych zdjęć. Przeglądarka zwa
 Przejrzano wskazany projekt Aleph oraz źródła MapillaryClickPreview i eksperymentalnego forka Panoramax. Dla wybranych punktów największą poprawę wyglądu otoczenia może dać rzeczywiste zdjęcie z dopasowaną turbiną albo prawdziwy teksturowany model 3D. Panorama umożliwia rozglądanie się ze stanowiska aparatu; swobodne przemieszczanie wymaga modelu przestrzennego. Pokrycie konkretnego miejsca pozostaje do sprawdzenia.
 
 Osobna [analiza integracji](Panoramy_i_modele_3D_analiza_integracji.md) opisuje zweryfikowane funkcje, wymagania wersji i tokenów, zasady dostępu do danych Aleph/Google, georeferencję GLB oraz etapowy plan: sprawdzenie zdjęć przy punktach, kalibracja kamery i fotomontaż, następnie opcjonalny import modelu. Zawiera propozycje bibliotek i przykład odczytu metadanych. To kierunek rozwoju, **nie funkcja wdrożona w pakiecie 2.6.0**; rastry analizy i pakiet instalacyjny pozostają bez zmian.
+
+
+## Suplement P — wdrożone w 2.7.0: własne zdjęcie i fotomontaż
+
+W tym samym formularzu dodano zdjęcia z telefonu: przeciągnięcie lub dwa kliknięcia określają aparat i kierunek, następnie użytkownik wskazuje JPG/PNG. Ujęcia pojawiają się w projekcie jako punkty i odcinki kierunku, po utworzeniu atlasu zapisują się w GeoJSON. `report.json` zachowuje listę zdjęć, parametry, hash oryginału i ostrzeżenia. Przygotowanie w `QgsTask` korzysta z istniejących modeli i nie przelicza widoczności.
+
+Samodzielny HTML nakłada uproszczone przestrzenne turbiny na rzeczywiste zdjęcie. Użytkownik dopasowuje kamerę, porównuje obraz z turbinami i bez nich, korzysta z przybliżonej maski NMT/NMPT oraz ręcznie maskuje pierwszy plan. PNG ma wymiar przygotowanego zdjęcia, do 6000 px / 24 MP; oryginał jest zachowany. Dopasowanie i maskę można pobrać do JSON i wczytać w QGIS przed ponownym przygotowaniem. Fotomontaż dotyczy jednego stanowiska; nie tworzy modelu otoczenia ani panoramy.
+
+Sprawdzono repozytoria go2streetview, Street View Saccon, StreetView Pro i GoogleMapsStreetDock. Dodano jawny odnośnik do Street View dla stanowiska i kierunku, z konwersją północy siatki na geograficzną. Nie pobiera on zdjęć Google i nie wymaga klucza API. Panoramax, Mapillary i GLB pozostają planowanymi integracjami. Pełne działanie, rozwiązania techniczne, testy oraz ograniczenia opisuje [instrukcja 2.7.0](Instrukcja_ATLAS_2.7.0.md).

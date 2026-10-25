@@ -1,10 +1,10 @@
-# NMT i NMTP ściągacz — Atlas widoczności 2.6.0
+# NMT i NMTP ściągacz — Atlas widoczności 2.7.0
 
 Jeden formularz do pobierania NMT/NMPT i tworzenia **map widoczności całych kół wokół turbin**. Obserwatorzy nie są wymagani. Każdy model ma własny promień i krok mapy. Wynik pokazuje liczbę widocznych turbin, trzy wysokości wirnika, niepewność danych i opcjonalnie ekspozycję dróg oraz zabudowy.
 
 ## Instalacja
 
-QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.6.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
+QGIS → **Wtyczki → Zarządzanie wtyczkami → Zainstaluj z ZIP** → `NMT i NMTP ściągacz-2.7.0.zip`. Nie rozpakowuj. Zakończ wcześniejsze zadania i uruchom QGIS ponownie po aktualizacji. W razie potrzeby odinstaluj poprzednią wersję i zainstaluj nowy ZIP. Oddzielne foldery danych pozostają na dysku.
 
 QGIS 3.28–3.x, Python >=3.9; sprawdzone QGIS 3.40.6 / Qt5 / GDAL 3.10.3 / Linux. Windows i macOS nie są dostępne tutaj do testów. QGIS 4 nie jest obsługiwany. Biblioteki środowiska QGIS: PyQGIS, GDAL/OGR, NumPy, requests i lxml, bez osobnego serwera, GRASS czy Open3D.
 
@@ -76,6 +76,16 @@ Pliki dodatkowe w folderze atlasu: `promienie.gpkg`, `profil_NMT.svg`, `profil_N
 
 [Dokładna instrukcja i omówienie inspiracji z PDF](../docs/Instrukcja_ATLAS_2.2.0.md). Nowe pliki wyniku: `raport.gpkg`, `scena_3d_lekka_*.html` i opcjonalnie `tekstura_*.png`. Szczegółowa scena zawiera obraz w sobie. Modeli, cache i raportów użytkownika nie ma w ZIP-ie instalacyjnym.
 
+
+## Wydanie 2.7.0 — własne zdjęcie z telefonu
+
+W tej samej wtyczce znajdziesz **Zdjęcie z telefonu · fotomontaż turbin**. Kliknij **Dodaj zdjęcie na mapie**, przeciągnij od miejsca aparatu w kierunku kadru (lub kliknij te dwa miejsca), a następnie wybierz oryginalny JPG/PNG. W formularzu pojawi się plik, podgląd i parametry aparatu. Miejsce i kierunek pojawiają się jako warstwy w projekcie. Po wykonaniu lub wczytaniu atlasu kliknij **Przygotuj wizualizację na zdjęciu**; korzysta z zapisanych NMT/NMPT, bez ponownego pobierania i analizy.
+
+HTML pozwala dopasować kierunek, pochylenie, przechylenie i kąt widzenia, włączyć zasłanianie NMT/NMPT, namalować ręczną maskę pierwszego planu oraz pobrać pełnowymiarowy PNG i dopasowanie JSON. JSON wczytasz ponownie we wtyczce. Model turbiny używa pozycji i wymiarów z atlasu; kształt i ustawienie łopat są uproszczone. To fotomontaż z jednego stanowiska, nie swobodne przemieszczanie się po zdjęciu. Nie obsługuje panoram 360° ani HEIC bez konwersji.
+
+Do 24 zdjęć i 200 najbliższych turbin. Roboczy obraz do 6000 px / 24 MP; oryginał zachowany. Profile zasłaniania są przybliżeniem, a nie zastępstwem rastrów widoczności; braki i niezgodność położenia oka z NMPT są zgłaszane. Przycisk **Otwórz Street View** otwiera Google Maps dla stanowiska i kierunku w przeglądarce, bez pobierania zdjęć Google do fotomontażu. Nie wymaga klucza API ani QtWebEngine.
+
+Pliki `zdjecia_punkty.geojson`, `zdjecia_kierunki.geojson` oraz `zdjecia_terenowe/ID/` są częścią atlasu; listę i ustawienia zachowuje `report.json`. [Instrukcja 2.7.0](../docs/Instrukcja_ATLAS_2.7.0.md) opisuje przygotowanie zdjęcia, dopasowanie, zapis, ograniczenia i testy.
 
 ## Wydanie 2.6.0 — punkty z mapy i szczegółowy widok z gruntu
 

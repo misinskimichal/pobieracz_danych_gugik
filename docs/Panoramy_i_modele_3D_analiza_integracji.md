@@ -2,6 +2,8 @@
 
 Stan weryfikacji: 24 października 2026. Dokument opisuje **proponowane integracje**, a nie funkcje już wdrożone w wersji 2.6.0. Przejrzano kod i dokumentację wskazanych niżej repozytoriów. Nie pobierano panoram ani modeli Google i nie potwierdzono pokrycia konkretnej lokalizacji użytkownika.
 
+Aktualizacja z 25 października: **własne zdjęcia i poglądowy fotomontaż turbin wdrożono w 2.7.0** — [instrukcja i ograniczenia](Instrukcja_ATLAS_2.7.0.md). Automatyczne źródła Panoramax/Mapillary, panoramy 360° i importer GLB opisane poniżej pozostają planem.
+
 ## Co najbardziej poprawi widok z poziomu gruntu
 
 Ortofotomapa pokazuje przede wszystkim dachy i korony drzew. Jej nałożenie na teren nie odtwarza wyglądu ścian, pni ani przestrzeni pod drzewami. Gęstsze symbole lasu mogą poprawić prezentację, ale nie zastąpią rzeczywistych zdjęć.

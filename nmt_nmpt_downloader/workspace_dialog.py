@@ -332,6 +332,9 @@ class WorkspaceDialog(QDialog):
         note.setWordWrap(True)
         detail_form.addRow(note)
         form.addRow(self.detail_box)
+        from .photo_panel import PhotoPanel
+        self.photos = PhotoPanel(self)
+        form.addRow(self.photos)
         self.report_folder = FolderChooser(self.settings.value('nmt_nmpt/report_folder', ''))
         form.addRow('Folder atlasów i raportów:', self.report_folder)
         self.auto_download = QCheckBox('Automatycznie pobierz brakujące kafle; używaj zgodnych plików z folderów')
@@ -603,6 +606,7 @@ class WorkspaceDialog(QDialog):
                     scene_vertices=self.scene_quality.currentData(), scene_radius=self.scene_radius.value(),
                     scene_texture=self.scene_texture.isChecked())
         opts.update(self.view_options())
+        opts['photo_imports'] = self.photos.configs(absolute=True)
         return layer, opts, contexts
 
     def view_options(self):
@@ -1012,6 +1016,12 @@ class WorkspaceDialog(QDialog):
             self.persist_viewpoint_layer()
         except (RuntimeError, OSError) as exc:
             self.log.appendPlainText('Warstwa punktów: ' + str(exc))
+        self.photos.attach_report(report)
+        if report.get('report_dir') and report.get('products'):
+            try:
+                self.photos.sync_layers()
+            except (RuntimeError, OSError, ValueError) as exc:
+                self.log.appendPlainText('Warstwy zdjęć: ' + str(exc))
         if self.report_dir:
             from .core import atomic_json
             try:
@@ -1203,6 +1213,9 @@ class WorkspaceDialog(QDialog):
             if (path.parent / 'atlas.html').is_file():
                 report.setdefault('presentation', {})['html'] = str(path.parent / 'atlas.html')
             self.last_report, self.report_dir, self.running_atlas = report, str(path.parent), True
+            self.photos.attach_report(report, restore=True)
+            if self.photos.records:
+                self.photos.sync_layers()
             self.atlas_layers = {}
             self.rerun_button.setEnabled(True)
             self.refresh_scene_button.setEnabled(True)
@@ -1251,5 +1264,6 @@ class WorkspaceDialog(QDialog):
         self.catalog_label.setText('\n'.join(f'{r}: ' + ', '.join(f'{v["resolution"]:g} m / {v["height"]}' for v in result['variants'] if v['resource'] == r) for r in self.panels))
 
     def closeEvent(self, event):
+        self.photos.stop_picker(show=False)
         self.hide()
         event.ignore()
