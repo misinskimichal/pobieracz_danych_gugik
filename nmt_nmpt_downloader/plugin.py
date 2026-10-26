@@ -293,6 +293,8 @@ class DownloadDialog(QDialog):
         self.nmpt.toggled.connect(self.resource_controls['NMPT'].setEnabled)
         self.resource_controls['NMT'].setEnabled(self.nmt.isChecked())
         self.resource_controls['NMPT'].setEnabled(self.nmpt.isChecked())
+        from .layer_panel_picker import install_layer_pickers
+        install_layer_pickers(self, iface)
 
     def refresh_catalog(self):
         self.catalog_button.setEnabled(False)
@@ -501,6 +503,8 @@ class TerrainPlugin:
                 self.visibility_dialog.task.cancel()
             self.visibility_dialog.hide()
         if self.dialog:
+            if getattr(self.dialog, 'layer_panel_picker', None):
+                self.dialog.layer_panel_picker.finish(restore=False)
             if getattr(self.dialog, 'progress_visibility', None):
                 self.dialog.progress_visibility.stop()
             if getattr(self.dialog, 'visual_settings', None):

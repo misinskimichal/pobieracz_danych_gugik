@@ -146,7 +146,7 @@ if(typeof document!=='undefined') (()=>{
     if(strokes.length){mask=document.createElement('canvas');mask.width=width;mask.height=height;const mc=mask.getContext('2d');mc.fillStyle='#fff';mc.fillRect(0,0,width,height);applyStrokes(mc,width,height);oc.globalCompositeOperation='destination-in';oc.drawImage(mask,0,0);}
     context.globalAlpha=p.opacity;context.drawImage(overlay,0,0);context.globalAlpha=1;overlay.width=overlay.height=0;
     if(mask){
-      if(!full&&$('show-mask').checked&&$('mode').value!=='camera'){
+      if(!full&&$('show-mask').checked&&['hide','restore'].includes($('mode').value)){
         const mc=mask.getContext('2d');mc.globalCompositeOperation='source-out';mc.fillStyle='rgba(255,75,95,.3)';mc.fillRect(0,0,width,height);context.drawImage(mask,0,0);
       }mask.width=mask.height=0;
     }
@@ -167,7 +167,7 @@ if(typeof document!=='undefined') (()=>{
   $('undo').onclick=()=>{maskPointCount-=(strokes.pop()?.points.length||0);redraw();};$('clear').onclick=()=>{strokes=[];maskPointCount=0;redraw();};
   function position(event){const box=rect();return [M.clamp((event.clientX-box.left)/box.width,0,1),M.clamp((event.clientY-box.top)/box.height,0,1)];}
   canvas.onpointerdown=event=>{
-    if(!loaded||event.button!==0)return;canvas.setPointerCapture(event.pointerId);
+    if(!loaded||event.button!==0||$('mode').value==='locked')return;canvas.setPointerCapture(event.pointerId);
     if($('mode').value==='camera')drag={x:event.clientX,y:event.clientY,pose:pose()};
     else{if(strokes.length>=2000||maskPointCount>=200000){$('status').textContent='Limit maski: 2000 pociągnięć / 200 000 punktów. Usuń część maski.';return;}
       const stroke={mode:$('mode').value,radius:Math.min(1,Number($('brush').value)/rect().width/2),points:[position(event)]};strokes.push(stroke);maskPointCount++;drag={stroke};redraw();}

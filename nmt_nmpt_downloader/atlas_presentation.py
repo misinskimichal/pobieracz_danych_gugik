@@ -16,6 +16,7 @@ from qgis.core import (
     QgsSingleBandPseudoColorRenderer, QgsSvgMarkerSymbolLayer, QgsVectorLayer,
 )
 from .core import VERSION, atomic_json
+from .analysis_identity import result_title
 
 KEY = 'nmt_nmpt/atlas_run'
 QUALITY = [(1, '#00000000', 'Komplet danych modelu'), (2, '#805288aa', 'Niepewna trasa — brakujące dane'),
@@ -124,16 +125,19 @@ def add_atlas(report, iface=None, show=True):
     existing = [layer for layer in project.mapLayers().values() if layer.customProperty(KEY, '') == run]
     if existing:
         if show:
-            node = project.layerTreeRoot().findLayer(existing[0].id())
+            node = project.layerTreeRoot().findLayer(existing[0].id()).parent()
             while node:
                 if node.customProperty(KEY, '') == run or node.name().startswith('Atlas widoczności ·'):
+                    node.setName(result_title(report))
                     node.setItemVisibilityChecked(True)
                     break
                 node = node.parent()
         return {layer.customProperty('nmt_nmpt/atlas_key'): layer for layer in existing}
     root = project.layerTreeRoot()
-    group = root.insertGroup(0, 'Atlas widoczności · ' + Path(run).name.replace('atlas_', ''))
+    group = root.insertGroup(0, result_title(report))
     group.setCustomProperty(KEY, run)
+    group.setCustomProperty('nmt_nmpt/turbine_layer_name', report.get('turbine_layer_name', ''))
+    group.setCustomProperty('nmt_nmpt/created_at', report.get('created_at', report.get('started_at', '')))
     group.setItemVisibilityChecked(show)
     layers = {}
 
@@ -142,6 +146,7 @@ def add_atlas(report, iface=None, show=True):
             raise ValueError('Nie można otworzyć wyniku: ' + layer.name())
         layer.setCustomProperty(KEY, run)
         layer.setCustomProperty('nmt_nmpt/atlas_key', key)
+        layer.setCustomProperty('nmt_nmpt/result_title', result_title(report))
         project.addMapLayer(layer, False)
         node = parent.addLayer(layer)
         node.setItemVisibilityChecked(checked)
@@ -228,7 +233,7 @@ def build_layout(report, layers, project=None):
     project = project or QgsProject.instance()
     layout = QgsPrintLayout(project)
     layout.initializeDefaults()
-    title = 'Atlas widoczności ' + Path(report['report_dir']).name
+    title = result_title(report)
     number = 1
     unique = title
     while project.layoutManager().layoutByName(unique) is not None:
@@ -470,7 +475,7 @@ def make_html(report, presentation):
     pages = ''.join(f'<a href="{html.escape(Path(p).name)}"><img alt="Mapa atlasu" src="{html.escape(Path(p).name)}"></a>' for p in presentation['png'])
     text = '<!doctype html><html lang="pl"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Atlas widoczności turbin</title>'
     text += '''<style>body{margin:0;background:#eef3f5;color:#153747;font:16px system-ui,sans-serif}header{background:#153747;color:white;padding:36px max(24px,6vw)}header small{color:#89e0d4;letter-spacing:.18em}h1{margin:.4em 0;font-size:clamp(25px,4vw,44px)}main{max-width:1250px;margin:26px auto;padding:0 20px}.cards{display:flex;gap:18px;flex-wrap:wrap}article{background:white;border-radius:16px;padding:24px;box-shadow:0 8px 24px #1237460a;flex:1;min-width:230px}article small{font-weight:700;color:#16a79c}strong{display:block;font-size:34px;margin:12px 0}span{line-height:1.6;color:#526d7b}img{width:100%;height:auto;margin:24px 0 0;border-radius:12px;box-shadow:0 10px 36px #15374718}nav{margin:24px 0;display:flex;gap:14px;flex-wrap:wrap}nav a{background:#153747;color:white;text-decoration:none;padding:12px 18px;border-radius:9px}aside{background:#fff;padding:22px;border-radius:12px;line-height:1.7}footer{font-size:13px;color:#57717d;margin:26px 0}</style>'''
-    text += '<header><small>KRAJOBRAZ · EKSPOZYCJA · TURBINY</small><h1>Atlas widoczności</h1><p>Całe otoczenie inwestycji. NMT i NMPT w osobnych, porównywalnych modelach.</p></header><main>'
+    text += '<header><small>KRAJOBRAZ · EKSPOZYCJA · TURBINY</small><h1>' + html.escape(result_title(report)) + '</h1><p>Całe otoczenie inwestycji. NMT i NMPT w osobnych, porównywalnych modelach.</p></header><main>'
     nav = ''.join(f'<a href="{filename}">{title}</a>' for filename, title in [('atlas.pdf', 'Atlas PDF'),
                   ('atlas.gpkg', 'Warstwy GeoPackage'), ('ekspozycja.csv', 'Ekspozycja CSV'), ('report.md', 'Raport')]
                   if (folder / filename).is_file())

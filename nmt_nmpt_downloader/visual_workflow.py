@@ -1,5 +1,5 @@
 """A short visual workflow, with existing expert controls moved to one settings dialog."""
-from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QMenu, QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget
 from qgis.core import QgsProject, QgsWkbTypes
 from .core import VERSION
 
@@ -23,6 +23,17 @@ def transfer_rows(source, destination, keep=()):
         source.addRow(label, field) if label else source.addRow(field)
 
 
+def fold_group(group, title):
+    form = group.layout()
+    body = QWidget(group)
+    destination = QFormLayout(body)
+    transfer_rows(form, destination)
+    form.addRow(body)
+    group.setTitle(title)
+    group.setCollapsed(True)
+    return body
+
+
 def install_visual_workflow(owner):
     dialog = QDialog(owner)
     dialog.setWindowTitle('Ustawienia zaawansowane · wizualizacja i wyniki')
@@ -41,20 +52,19 @@ def install_visual_workflow(owner):
     owner.reuse_context.setChecked(True)
     owner.reuse_context.toggled.connect(owner.mark_scene_dirty)
     expert.addRow(owner.reuse_context)
-    root_form = owner.inputs.layout()
-    for widget in (owner.context_box, owner.auto_download, owner.curvature, owner.show_after, owner.export_after):
-        position = root_form.getWidgetPosition(widget)[0]
-        if position >= 0:
-            row = root_form.takeRow(position)
-            if row.labelItem and row.labelItem.widget():
-                expert.addRow(row.labelItem.widget(), widget)
-            else:
-                expert.addRow(widget)
+    fold_group(owner.context_box, 'Ważne miejsca · opcjonalnie: drogi, zabudowa, obserwatorzy')
     owner.hidden_visual_actions = QWidget(owner)
     owner.hidden_visual_actions.hide()
     detail = owner.detail_box.layout()
-    owner.detail_box.setTitle('Wizualizacja · wybierz obraz i otwórz wynik')
     transfer_rows(detail, expert)
+    owner.visual_body = QWidget(owner.detail_box)
+    detail.addRow(owner.visual_body)
+    detail = QFormLayout(owner.visual_body)
+    owner.detail_box.setTitle('Wizualizacja')
+    owner.detail_box.setCollapsed(True)
+    owner.details.setChecked(False)
+    owner.details.setText('Przy analizie przygotuj również przekrój i model 3D')
+    owner.export_after.setChecked(False)
     # These were different buttons for the same refresh operation.
     for button in (owner.refresh_scene_button, owner.prepare_points_button):
         index = expert.getWidgetPosition(button)[0]
@@ -114,12 +124,26 @@ def install_visual_workflow(owner):
     settings.clicked.connect(dialog.exec)
     detail.addRow(settings)
     detail.addRow(owner.scene_button)
-    # Move less frequent result actions out of the persistent footer.
-    extra = QGroupBox('Pozostałe wyniki')
-    result_form = QFormLayout(extra)
-    for button in (owner.ray_button, owner.profile_button, owner.rerun_button):
-        result_form.addRow(button)
-    expert.addRow(extra)
+    root_form = owner.inputs.layout()
+    row = root_form.getWidgetPosition(owner.export_after)[0]
+    if row >= 0:
+        root_form.takeRow(row)
+    owner.export_after.setText('Przy analizie zapisz również mapy PDF / PNG i atlas HTML')
+    detail.addRow(owner.export_after)
+    # One menu for QGIS results and recalculation; no duplicate result buttons.
+    menu = QMenu(owner)
+    owner.result_actions = []
+    for button in (owner.ray_button, owner.profile_button, owner.report_button, owner.rerun_button):
+        action = menu.addAction(button.text())
+        action.triggered.connect(button.click)
+        owner.result_actions.append((action, button))
+        button.setParent(owner.hidden_visual_actions)
+        button.hide()
+    owner.results_button = QToolButton(owner)
+    owner.results_button.setText('Więcej wyników')
+    owner.results_button.setPopupMode(QToolButton.InstantPopup)
+    owner.results_button.setMenu(menu)
+    owner.footer.addWidget(owner.results_button)
     owner.inputs.layout().insertRow(0, owner.load_button)
     owner.visual_source.currentIndexChanged.connect(owner.visual_source_changed)
     for combo in owner.scene_layers.values():

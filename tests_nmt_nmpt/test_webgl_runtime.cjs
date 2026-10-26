@@ -18,7 +18,7 @@ const gl=new Proxy(methods,{get:(target,name)=>name in target?target[name]:()=>{
 methods.NO_ERROR=0;methods.getError=()=>{const value=gpuError;gpuError=0;return value};
 methods.getParameter=key=>key===methods.MAX_TEXTURE_SIZE?2048:undefined;
 methods.texImage2D=(...args)=>{if(args.length===6){uploadedTexture=args[5];gpuError=failUpload?1285:0}};
-const ids=['title','info','profile','fallback','bearing','tilt','vertical','sun','projection','fov','material','cover','trees','buildings','object-view','forest-objects','photo-shade','photo-top','diagnostics','viewpoint','lines','photo','show-photo','context-status','status','view','low','high','bval','tval','vval','fval','reset','save','camera','eye-height','locator','eye-status','texture-status','look-turbine','bearing-label','download-texture'];
+const ids=['title','info','profile','fallback','bearing','tilt','vertical','sun','projection','fov','material','cover','trees','buildings','surface-mode','forest-objects','photo-shade','photo-top','diagnostics','viewpoint','lines','photo','show-photo','context-status','status','view','low','high','bval','tval','vval','fval','reset','save','camera','eye-height','locator','eye-status','texture-status','look-turbine','bearing-label','download-texture'];
 for(const key of ids)elements[key]={value:{tilt:28,vertical:1,sun:300,projection:'perspective',fov:45,material:'height'}[key]??225,checked:true,style:{display:'none'},handlers:{},appendChild(){},addEventListener(name,cb){this.handlers[name]=cb}};
 Object.assign(elements.view,{clientWidth:1600,clientHeight:1000,getContext:()=>gl,setPointerCapture(){}});
 Object.assign(elements.locator,{width:320,height:320,getContext:()=>new Proxy({drawImage(){locatorPhotos++}},{get:(target,key)=>target[key]||(()=>{}),set:()=>true}),getBoundingClientRect:()=>({left:0,top:0,width:320,height:320})});
@@ -53,7 +53,7 @@ images[0].onload();frames.shift()();assert.equal(elements.photo.checked,true);as
 elements.material.value='cover';elements.material.handlers.input();frames.shift()();assert.equal(photoUniform,1,'Changing the palette must not turn off the photograph');
 assert(elements['texture-status'].textContent.includes('WŁĄCZONE'));
 elements.photo.checked=false;elements.photo.handlers.input();frames.shift()();assert.equal(photoUniform,0);assert(elements['texture-status'].textContent.includes('WYŁĄCZONE NA MODELU'));
-elements['show-photo'].onclick();frames.shift()();assert.equal(photoUniform,1);
+elements.photo.checked=true;elements.photo.handlers.input();frames.shift()();assert.equal(photoUniform,1);
 if(!process.argv[2]){
  elements.cover.checked=true;elements.cover.handlers.input();frames.shift()();
  assert(elements.status.textContent.includes('1 brył budynków'));
@@ -61,7 +61,7 @@ if(!process.argv[2]){
  const built=Array.from(buffers[construction.vertices]).filter((_,i)=>i%12===11);
  assert.equal(built.filter(v=>v===1).length,6,'Both roof triangles use the orthophoto; walls, tree and turbine remain untextured');
  elements.buildings.checked=false;elements.buildings.handlers.input();frames.shift()();assert(elements.status.textContent.includes('0 brył budynków'));
- elements['object-view'].onclick();frames.shift()();assert.equal(elements.cover.checked,false);assert.equal(photoUniform,1);assert(elements.status.textContent.includes('1 brył budynków'));assert(elements['context-status'].textContent.includes('przerwy między symbolami'));
+ elements['surface-mode'].value='objects';elements['surface-mode'].handlers.input();frames.shift()();assert.equal(elements.cover.checked,false);assert.equal(photoUniform,1);assert(elements.status.textContent.includes('1 brył budynków'));assert(elements['context-status'].textContent.includes('przerwy między symbolami'));
 }
 assert.equal(uploadedTexture.width,2048);assert.equal(uploadedTexture.height,2048,'Each texture dimension must fit the device and allow mipmaps');
 assert.equal(elements['download-texture'].href,context.textureData);assert.equal(elements['download-texture'].style.display,'');
@@ -72,7 +72,7 @@ assert.equal(uploadedTexture,images[0]);assert.equal(elements.photo.disabled,fal
 if(process.argv[3]){
  elements.cover.checked=true;elements.photo.checked=true;elements.cover.handlers.input();draws=[];frames.shift()();
  if(process.argv[4]==='eye'){const b=payload.texture_bounds||[payload.x[0],payload.y[payload.y.length-1],payload.x[payload.x.length-1],payload.y[0]],point=payload.camera_observer;assert(point);draws=[];elements.locator.handlers.pointerdown({clientX:(point[0]-b[0])/(b[2]-b[0])*320,clientY:(b[3]-point[1])/(b[3]-b[1])*320});frames.shift()();assert.equal(elements.camera.value,'eye')}
- if(process.argv[5]==='objects'){draws=[];elements['object-view'].onclick();frames.shift()()}
+ if(process.argv[5]==='objects'){draws=[];elements['surface-mode'].value='objects';elements['surface-mode'].handlers.input();frames.shift()()}
  const out=process.argv[3];fs.mkdirSync(out,{recursive:true});const used=new Set(draws.flatMap(d=>d.indices?[d.vertices,d.indices]:[d.vertices]));
  for(const key of used)fs.writeFileSync(`${out}/buffer_${key}.bin`,Buffer.from(buffers[key].buffer,buffers[key].byteOffset,buffers[key].byteLength));
  fs.writeFileSync(`${out}/frame.json`,JSON.stringify({matrix,draws,methods,vertical:+elements.vertical.value,texture:payload.texture_bounds,radius:payload.radius,camera:elements.camera.value,eye_info:elements['eye-status'].textContent,material:elements.material.value,photo:elements.photo.checked}));

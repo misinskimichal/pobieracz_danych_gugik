@@ -387,6 +387,9 @@ class AtlasEngine:
         self.report = dict(version=VERSION, state='running', started_at=now(), options=options,
                            products=[], downloads=[], input_issues=[], raster_errors=[], sources={},
                            algorithm='GDAL minimum absolute target height; reciprocity; three rotor heights; bounded NoData')
+        from .analysis_identity import initialize_identity
+        initialize_identity(self.report)
+        self.options['analysis_created_at'] = self.report['created_at']
 
     def event(self, message):
         self.log(message)
@@ -661,7 +664,8 @@ class AtlasEngine:
         return self.report
 
     def write_markdown(self):
-        lines = ['# Atlas widoczności turbin', '', f'Wersja {VERSION}; stan **{self.report["state"]}**.',
+        from .analysis_identity import result_title
+        lines = ['# ' + result_title(self.report), '', f'Wersja {VERSION}; stan **{self.report["state"]}**.',
                  f'Czas: {self.report["elapsed_seconds"]:.1f} s; EPSG:2180.', '',
                  'Wynik odpowiada: z których miejsc otoczenia widać turbinę na wysokości końca łopaty, piasty i dolnego zasięgu wirnika.',
                  'Nie jest to obserwacja z poziomu gruntu pod turbiną. Obliczenia korzystają z wzajemności linii widzenia.', '',

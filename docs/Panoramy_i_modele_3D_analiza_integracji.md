@@ -1,5 +1,7 @@
 # Prawdziwe zdjęcia i modele 3D — kierunki rozwoju Atlasu NMT/NMPT
 
+**Aktualizacja 2.9.0:** przywrócono renderer WebGL z 2.7.0. Opis Three.js wdrożonego w 2.8.0 poniżej jest historyczny; aktualny przebieg i ograniczenia opisuje [instrukcja 2.9.0](Instrukcja_ATLAS_2.9.0.md).
+
 Stan weryfikacji: 24 października 2026. Dokument opisuje **proponowane integracje**, a nie funkcje już wdrożone w wersji 2.6.0. Przejrzano kod i dokumentację wskazanych niżej repozytoriów. Nie pobierano panoram ani modeli Google i nie potwierdzono pokrycia konkretnej lokalizacji użytkownika.
 
 Aktualizacja z 25 października: **własne zdjęcia i poglądowy fotomontaż turbin wdrożono w 2.7.0** — [instrukcja i ograniczenia](Instrukcja_ATLAS_2.7.0.md). Automatyczne źródła Panoramax/Mapillary, panoramy 360° i importer GLB opisane poniżej pozostają planem.

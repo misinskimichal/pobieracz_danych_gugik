@@ -215,6 +215,8 @@ class VisibilityDialog(QDialog):
         self.report_button.clicked.connect(self.open_report)
         hide.clicked.connect(self.hide)
         self.update_detail()
+        from .layer_panel_picker import install_layer_pickers
+        install_layer_pickers(self, iface)
 
     def set_turbine_fields(self, layer):
         for combo in (self.hub_field, self.diameter_field):

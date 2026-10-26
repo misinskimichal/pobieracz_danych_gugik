@@ -106,6 +106,16 @@ def main():
         assert evaluate('document.getElementById("photo").photoDiagnostics().inFrame') == 0
         restored = frame('restored', 'document.getElementById("heading").value=0;document.getElementById("heading").dispatchEvent(new Event("input"))')
         assert changed(restored, unmasked) == 0
+        if os.environ.get('PHOTO_CHECK_LOCK'):
+            assert evaluate('document.getElementById("mode").value') == 'locked'
+            original_pose = evaluate('document.getElementById("photo").photoDiagnostics().pose')
+            evaluate('document.getElementById("photo").scrollIntoView({block:"start"})')
+            box = evaluate('(()=>{const r=document.getElementById("photo").getBoundingClientRect();return {x:r.left+r.width*.4,y:r.top+Math.min(r.height*.3,120)}})()')
+            call('Input.dispatchMouseEvent', dict(type='mousePressed', x=box['x'], y=box['y'], button='left', clickCount=1))
+            call('Input.dispatchMouseEvent', dict(type='mouseMoved', x=box['x']+100, y=box['y']+30, button='left', buttons=1))
+            call('Input.dispatchMouseEvent', dict(type='mouseReleased', x=box['x']+100, y=box['y']+30, button='left', clickCount=1))
+            assert evaluate('document.getElementById("photo").photoDiagnostics().pose') == original_pose
+            assert evaluate('document.getElementById("photo").photoDiagnostics().strokes') == 0
         evaluate('document.getElementById("photo").scrollIntoView({block:"start"});document.getElementById("mode").value="hide";document.getElementById("brush").value=100')
         location = evaluate('(()=>{const c=document.getElementById("photo"),r=c.getBoundingClientRect(),p=c.photoDiagnostics().pose,t=photoScene.targets[0],q=PhotoMontageMath.project([t.x,t.y,t.ground+t.hub],photoScene.camera,p,c.width,c.height,photoScene.curvature);return {x:r.left+q.x/c.width*r.width,y:r.top+q.y/c.height*r.height}})()')
         call('Input.dispatchMouseEvent', dict(type='mousePressed', x=location['x']-100, y=location['y'], button='left', clickCount=1))

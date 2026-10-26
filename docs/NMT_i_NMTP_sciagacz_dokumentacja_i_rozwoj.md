@@ -1,6 +1,6 @@
 # NMT i NMTP ściągacz — dokumentacja budowy, działania i kierunków rozwoju
 
-**Bieżąca wersja wtyczki:** 2.8.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
+**Bieżąca wersja wtyczki:** 2.9.0; podstawy pobierania i wcześniejsze etapy opisano od wydań 1.1.0 / 1.2.0.
 
 **Data opracowania:** 23 października 2026 r.  
 **Odbiorcy:** użytkownik QGIS, programista Python/PyQGIS oraz osoba planująca wdrożenia biznesowe.  
@@ -1807,3 +1807,8 @@ Wersja 2.7.0 miała oddzielne przyciski modelu i zdjęcia, więc wybór fotograf
 Nowy silnik Three.js 0.184 korzysta z lokalnych materiałów terenu i dachów, oddzielnych brył i instancji koron. Pozostawiono WebGL 1 jako tryb zgodności. Przy odświeżeniu tego samego modelu można zachować prawdziwe eksportowane wcześniej obrysy i ilustracyjne korony dla brakujących warstw. Link Street View ustawia konkretną panoramę i aparat; obraz pochodzi z dostarczonego pliku lub opcjonalnego oficjalnego Static API z własnym kluczem sesyjnym.
 
 105 testów QGIS/Python oraz próby w Chromium obejmują właściwy plik, wybór wyniku, warstwy, maski i teksturę widoczną z gruntu. Osobno użyto rzeczywistych NMT/NMPT i WMS GUGiK. Nie utożsamiamy działania tekstury z fotorealistyczną rekonstrukcją ścian. Pełna [instrukcja 2.8.0](Instrukcja_ATLAS_2.8.0.md) podaje ograniczenia, źródła i warunki korzystania z Google.
+
+
+## Suplement R — 2.9.0: wynik w QGIS i powrót renderera 2.7.0
+
+[Instrukcja aktualnego wydania 2.9.0](Instrukcja_ATLAS_2.9.0.md). Three.js z 2.8.0 usunięto z bieżącego eksportera; wrócił poprzedni WebGL 1. Ustawienia prezentacji są w zwijanej Wizualizacji; domyślny przebieg nie generuje 3D ani dodatkowych map PDF/HTML. Wszystkie pola warstw obsługują wskazanie w panelu QGIS przyciskiem ↖. Grupa wyników zawiera nazwę warstwy turbin i dokładny czas Europe/Warsaw. Dokumentacja 2.8.0 zachowuje znaczenie historyczne. Algorytm widoczności i interpretacja procentów pozostają bez zmian.

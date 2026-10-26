@@ -113,7 +113,7 @@ def main():
         colors = frame('eye_colors', 'document.getElementById("photo").checked=false;document.getElementById("photo").dispatchEvent(new Event("input"))')
         changed = np.count_nonzero(np.max(np.abs(photo-colors), axis=2) > 10)
         assert changed > 10000, changed
-        frame('eye_photo_restored', 'document.getElementById("show-photo").click()')
+        frame('eye_photo_restored', 'document.getElementById("photo").checked=true;document.getElementById("photo").dispatchEvent(new Event("input"))')
         switches = []
         valid_views = evaluate('(scene.detail_views||[]).map((v,i)=>v.error?-1:i).filter(i=>i>=0)')
         if len(valid_views) > 1:
@@ -130,7 +130,34 @@ def main():
             assert evaluate('document.getElementById("view").sceneDiagnostics().forest_presentation')
             continuous = frame('continuous_nmpt', 'document.getElementById("forest-objects").checked=false;document.getElementById("forest-objects").dispatchEvent(new Event("input"))')
             assert np.count_nonzero(np.max(np.abs(photo-continuous), axis=2) > 10) > 1000
-        frame('top_photo', 'document.getElementById("photo-top").click()')
+        frame('top_photo', 'document.getElementById("camera").value="top";document.getElementById("camera").dispatchEvent(new Event("input"))')
+        if os.environ.get('SCENE_CHECK_UI'):
+            ids = evaluate('Array.from(document.querySelectorAll("[id]")).map(e=>e.id)')
+            assert len(ids) == len(set(ids)), 'Duplicate HTML control IDs'
+            assert evaluate('Array.from(document.querySelectorAll("button")).map(e=>e.id)') == ['look-turbine', 'reset', 'save']
+            assert evaluate('document.getElementById("visualization").open') is False
+            evaluate('document.getElementById("visualization").open=true')
+            for mode in ['surface', 'objects', 'combined']:
+                frame('mode_' + mode, f'document.getElementById("surface-mode").value="{mode}";document.getElementById("surface-mode").dispatchEvent(new Event("input"))')
+                current = evaluate('document.getElementById("view").sceneDiagnostics()')
+                assert current['continuous_surface'] == (mode != 'objects'), current
+                assert current['forest_presentation'] == (mode != 'surface'), current
+            view = frame('control_eye', 'document.getElementById("camera").value="eye";document.getElementById("camera").dispatchEvent(new Event("input"))')
+            turned = frame('control_turned', 'document.getElementById("bearing").value=(+document.getElementById("bearing").value+60)%360;document.getElementById("bearing").dispatchEvent(new Event("input"))')
+            assert np.count_nonzero(np.max(np.abs(view-turned), axis=2) > 10) > 1000
+            frame('control_look', 'document.getElementById("look-turbine").click()')
+            assert evaluate('document.getElementById("camera").value') == 'eye'
+            frame('control_reset', 'document.getElementById("reset").click()')
+            assert evaluate('document.getElementById("camera").value') == 'orbit'
+            assert evaluate('+document.getElementById("fov").value') == 45
+            call('Browser.setDownloadBehavior', dict(behavior='allow', downloadPath=str(output.resolve())))
+            evaluate('document.getElementById("save").click()')
+            image = output/'scena_3d_NMPT.png'
+            deadline = time.monotonic()+10
+            while not image.exists():
+                assert time.monotonic() < deadline, 'PNG save button did not download a file'
+                time.sleep(.1)
+            assert image.read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
         final = evaluate('document.getElementById("view").sceneDiagnostics()')
         if os.environ.get('SCENE_TRACE_GL'):
             failures = evaluate('window.__glFailures')

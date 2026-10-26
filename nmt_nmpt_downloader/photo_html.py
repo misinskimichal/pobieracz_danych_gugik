@@ -19,14 +19,14 @@ button{background:#a0dfcd;color:#123b43;cursor:pointer}button:hover{background:#
 #status,#warnings,#summary{padding:8px 24px;white-space:pre-wrap}#warnings{color:#ffd889}#summary{color:#add5da}
 details{padding:12px 24px;max-width:1200px}summary{cursor:pointer}#progress{color:#b9f4d8}a{color:#a0dfcd}
 </style><header><h1>__TITLE__ · zdjęcie terenowe i turbiny</h1>
-<p>Własne zdjęcie · model perspektywiczny · zapis offline. Przeciągnij zdjęcie, aby dopasować kierunek i pochylenie kamery.</p></header>
-<div class="tools">
+<p>Pozycje turbin pochodzą z analizy. Przeciąganie jest zablokowane. Dopasowanie kamery i maski są dostępne w menu Wizualizacja.</p></header>
+<details id="visualization"><summary>Wizualizacja</summary><div class="tools">
 <label>Kierunek <input id="heading" type="number" min="0" max="360" step="0.1">°</label>
 <label>Pochylenie <input id="pitch" type="number" min="-85" max="85" step="0.1">°</label>
 <label>Poziomy kąt widzenia <input id="fov" type="number" min="10" max="140" step="0.1">°</label>
 <label><input id="turbines" type="checkbox" checked>Pokaż turbiny</label>
 <button id="save">Zapisz fotomontaż PNG</button><button id="settings">Zapisz dopasowanie JSON</button><span id="progress"></span>
-</div><details><summary>Dopasowanie i zasłanianie · ustawienia zaawansowane</summary><div class="tools">
+</div><details><summary>Dopasowanie i zasłanianie</summary><div class="tools">
 <label>Przechylenie <input id="roll" type="number" min="-45" max="45" step="0.1">°</label>
 <button id="aim">Patrz na najbliższą turbinę</button><button id="reset">Przywróć ustawienia</button>
 <label><input id="occlusion" type="checkbox" checked>Zasłanianie modelem</label>
@@ -36,11 +36,11 @@ details{padding:12px 24px;max-width:1200px}summary{cursor:pointer}#progress{colo
 <label>Obrót łopat <input id="phase" type="number" min="0" max="360" step="1">°</label>
 <label>Krycie <input id="opacity" type="range" min="0" max="1" step="0.05" value="1"></label>
 </div><div class="tools">
-<label>Narzędzie <select id="mode"><option value="camera">Dopasuj kamerę</option><option value="hide">Zamaluj pierwszy plan</option><option value="restore">Przywróć ręczną maskę</option></select></label>
+<label>Narzędzie <select id="mode"><option value="locked">Podgląd — bez przesuwania</option><option value="camera">Dopasuj kamerę — włącz przeciąganie</option><option value="hide">Zamaluj pierwszy plan</option><option value="restore">Przywróć ręczną maskę</option></select></label>
 <label>Pędzel <input id="brush" type="range" min="2" max="100" value="20">px podglądu</label>
 <label><input id="show-mask" type="checkbox" checked>Pokaż maskę</label>
 <button id="undo">Cofnij maskę</button><button id="clear">Usuń maskę</button>
-</div></details><div id="status">Wczytywanie własnego zdjęcia…</div><div id="warnings"></div>
+</div></details></details><div id="status">Wczytywanie własnego zdjęcia…</div><div id="warnings"></div>
 <div class="stage"><canvas id="photo" aria-label="Własne zdjęcie z modelem turbin"></canvas></div><div id="summary"></div>
 <details><summary>Jak dopasować zdjęcie i zachować wynik</summary>
 <p>Najpierw dopasuj kierunek, pochylenie i przechylenie; potem poziomy kąt widzenia. Wstępna ogniskowa EXIF nie uwzględnia wszystkich korekcji i kadrowania telefonu. Celownik oznacza oś aparatu, a linia poziomu kąt 0° — nie odtworzony horyzont terenu.</p>

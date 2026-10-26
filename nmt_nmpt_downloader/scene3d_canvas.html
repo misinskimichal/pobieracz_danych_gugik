@@ -2,10 +2,10 @@
 <title>Scena 3D — atlas widoczności</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#102b38;color:#e9f3f5;font:15px system-ui,sans-serif}header{padding:20px 28px;background:#153747}h1{font-size:25px;margin:0 0 8px}p{margin:5px 0;color:#b6d1da;line-height:1.5}.controls{display:flex;gap:22px;flex-wrap:wrap;padding:16px 28px;align-items:center}label{display:flex;gap:10px;align-items:center}input[type=range]{width:140px;accent-color:#6dd6ad}a,button{color:#153747;background:#8de1ca;border:0;border-radius:6px;padding:8px 14px;text-decoration:none;cursor:pointer}canvas{display:block;width:100%;height:65vh;min-height:360px;touch-action:none;background:linear-gradient(#bedeea,#ecf1e7)}aside{padding:16px 28px;line-height:1.65;color:#bfd6dd}.key{display:inline-block;width:180px;height:12px;background:linear-gradient(90deg,#21865a,#e4d45e,#d34747);margin:0 12px;vertical-align:middle}output{min-width:38px}small{color:#b6d1da}</style>
 <header><h1 id="title">Scena 3D</h1><p id="info"></p><p>To lekki podgląd bez ortofotomapy i widoku z oczu. <a id="full-scene">Otwórz pełną scenę WebGL</a>.</p><p>Przeciągnij scenę, aby zmienić stronę i kąt obserwacji. Kółko myszy zmienia powiększenie.</p></header>
-<div class="controls"><label>Strona <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
+<details><summary>Wizualizacja</summary><div class="controls"><label>Strona <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
 <label>Nachylenie <input id="tilt" type="range" min="8" max="80" value="25"><output id="tval"></output></label>
 <label>Pion × <input id="vertical" type="range" min="1" max="5" step=".25" value="1"><output id="vval"></output></label>
-<label><input id="cover" type="checkbox" checked>Pokrycie NMPT</label><button id="reset">Ustaw widok z przekroju</button><a id="profile">Przekrój i linie widzenia</a></div>
+<label><input id="cover" type="checkbox" checked>Pokrycie NMPT</label><button id="reset">Ustaw widok z przekroju</button><a id="profile">Przekrój i linie widzenia</a></div></details>
 <canvas id="view" aria-label="Obracana scena 3D terenu i turbiny"></canvas>
 <aside><span id="low"></span><span class="key"></span><span id="high"></span><br>
 Biała konstrukcja: turbina. Linie przerywane: trasy do końca łopaty, piasty i dolnego zasięgu wirnika od obserwatora z przekroju (linie są nakładką, nie znikają za siatką).<br>
@@ -14,7 +14,7 @@ Biała konstrukcja: turbina. Linie przerywane: trasy do końca łopaty, piasty i
 'use strict';
 const scene=/*SCENE_DATA*/;
 const $=id=>document.getElementById(id), canvas=$('view'),ctx=canvas.getContext('2d');
-$('title').textContent=`${scene.resource} · turbina ${scene.turbine} · scena 3D`;
+$('title').textContent=(scene.analysis_title?scene.analysis_title+' · ':'')+`${scene.resource} · turbina ${scene.turbine} · scena 3D`;
 $('info').textContent=`${scene.demo?'DANE SYNTETYCZNE · ':''}Promień ${scene.radius} m · analiza ${scene.analysis_step_m} m · siatka podglądu ok. ${scene.step_m} m · ${scene.status.join(' / ')}`;
 $('profile').href=`profil_${scene.resource}.svg`;
 $('full-scene').href=`scena_3d_${scene.resource}.html`;

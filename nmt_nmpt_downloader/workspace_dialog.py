@@ -14,7 +14,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import (QgsApplication, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsCoordinateTransformContext, QgsFieldProxyModel,
                        QgsMapLayerProxyModel, QgsProject, QgsTask, QgsVectorLayer, QgsVectorLayerFeatureSource)
-from qgis.gui import QgsFieldComboBox, QgsMapLayerComboBox
+from qgis.gui import QgsCollapsibleGroupBox, QgsFieldComboBox, QgsMapLayerComboBox
 
 from .atlas import AtlasEngine, MAX_LOCAL_CELLS
 from .core import PLUGIN_NAME, VERSION
@@ -189,7 +189,7 @@ class WorkspaceDialog(QDialog):
         self.catalog_label.setWordWrap(True)
         form.addRow(self.catalog_button)
         form.addRow(self.catalog_label)
-        self.context_box = QGroupBox('Ważne miejsca z projektu — opcjonalne')
+        self.context_box = QgsCollapsibleGroupBox('Ważne miejsca z projektu — opcjonalne')
         context_form = QFormLayout(self.context_box)
         self.context_layers = {}
         for role, title, filters in [('drogi', 'Drogi:', QgsMapLayerProxyModel.LineLayer),
@@ -205,7 +205,7 @@ class WorkspaceDialog(QDialog):
         note.setWordWrap(True)
         context_form.addRow(note)
         form.addRow(self.context_box)
-        self.detail_box = QGroupBox('Promienie, przekrój i widok 3D — bez wymaganej warstwy obserwatorów')
+        self.detail_box = QgsCollapsibleGroupBox('Wizualizacja')
         detail_form = QFormLayout(self.detail_box)
         self.rays = QCheckBox('Zapisz zielone / czerwone promienie widoczności (dla każdej turbiny)')
         self.rays.setChecked(True)
@@ -395,6 +395,8 @@ class WorkspaceDialog(QDialog):
         self.rerun_button = QPushButton('Przelicz ponownie · lokalne modele')
         self.load_button = QPushButton('Wczytaj report.json')
         hide = QPushButton('Ukryj')
+        self.hide_button = hide
+        self.footer = buttons
         for button in [self.start_button, self.cancel_button, self.map_button, self.report_button, hide]:
             buttons.addWidget(button)
         layout.addLayout(buttons)
@@ -437,10 +439,17 @@ class WorkspaceDialog(QDialog):
         from .visual_workflow import install_visual_workflow, select_scene_layers
         install_visual_workflow(self)
         select_scene_layers(self)
+        hide.hide()
+        from .layer_panel_picker import install_layer_pickers
+        install_layer_pickers(self, iface)
         self.diagnostics_button = QPushButton('Pokaż dziennik zadania')
         self.diagnostics_button.setCheckable(True)
         self.diagnostics_button.toggled.connect(self.update_compact_progress)
-        self.layout().insertWidget(self.layout().count()-2, self.diagnostics_button)
+        self.diagnostics_button.hide()
+        self.results_button.menu().addSeparator()
+        self.diagnostics_action = self.results_button.menu().addAction('Dziennik zadania')
+        self.diagnostics_action.setCheckable(True)
+        self.diagnostics_action.toggled.connect(self.diagnostics_button.setChecked)
         self.progress_visibility = QTimer(self)
         self.progress_visibility.setInterval(300)
         self.progress_visibility.timeout.connect(self.update_compact_progress)
@@ -452,6 +461,9 @@ class WorkspaceDialog(QDialog):
         for widget in (self.progress, self.stats_label, self.active, self.activity_label):
             widget.setVisible(running)
         self.log.setVisible(self.diagnostics_button.isChecked())
+        self.cancel_button.setVisible(running)
+        for action, button in self.result_actions:
+            action.setEnabled(button.isEnabled() and not running)
 
     def open_visualization(self):
         if self.task or self.export_job:
@@ -575,6 +587,8 @@ class WorkspaceDialog(QDialog):
     def show_advanced(self, show):
         for panel in self.panels.values():
             panel.advanced(show)
+        self.catalog_button.setVisible(show)
+        self.catalog_label.setVisible(show)
 
     def mode_changed(self, *args):
         atlas = self.mode.currentIndex() == 0
@@ -650,6 +664,8 @@ class WorkspaceDialog(QDialog):
                     raise ValueError('Brak CRS warstwy: ' + other.name())
                 contexts[role] = (QgsVectorLayerFeatureSource(other), other.crs())
         opts = dict(common, models=models, source_settings=source_settings, turbines_ids=ids,
+                    turbine_layer_name=layer.customProperty('nmt_nmpt/original_turbine_layer_name', '') or layer.name(),
+                    turbine_layer_id=layer.id(),
                     turbine_id_field=layer.customProperty('nmt_nmpt/turbine_id_field', ''),
                     context_layer_ids={key: combo.currentLayer().id() for key, combo in dict(self.context_layers, **self.scene_layers).items()
                                        if combo.currentLayer() is not None},
@@ -1116,6 +1132,9 @@ class WorkspaceDialog(QDialog):
                 text += '\n' + '\n'.join(report['scene_texture_warnings'])
         if invalid_views:
             text += '\nPominięte punkty widokowe:\n' + '\n'.join(invalid_views)
+        if report.get('products'):
+            from .analysis_identity import result_title
+            text = result_title(report) + '\n' + text
         self.stage.setText(text)
         self.log.appendPlainText(text)
         self.inputs.setEnabled(True)
@@ -1200,6 +1219,7 @@ class WorkspaceDialog(QDialog):
             if not layer.isValid():
                 raise ValueError('Brak atlas.gpkg z geometrią i wysokościami turbin. Zachowaj cały folder atlasu.')
             layer.setCustomProperty('nmt_nmpt/turbine_id_field', 'source_id')
+            layer.setCustomProperty('nmt_nmpt/original_turbine_layer_name', report.get('turbine_layer_name') or report['options'].get('turbine_layer_name', ''))
             QgsProject.instance().addMapLayer(layer)
             self.mode.setCurrentIndex(0)
             self.layer.setLayer(layer)
@@ -1334,6 +1354,7 @@ class WorkspaceDialog(QDialog):
         self.catalog_label.setText('\n'.join(f'{r}: ' + ', '.join(f'{v["resolution"]:g} m / {v["height"]}' for v in result['variants'] if v['resource'] == r) for r in self.panels))
 
     def closeEvent(self, event):
+        self.layer_panel_picker.finish(restore=False)
         self.photos.stop_picker(show=False)
         self.hide()
         event.ignore()

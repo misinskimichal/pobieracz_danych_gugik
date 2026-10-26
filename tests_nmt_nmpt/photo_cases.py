@@ -27,6 +27,117 @@ from nmt_nmpt_downloader.photo_panel import bearing_on_grid, camera_adjustment, 
 
 
 class PhotoTests(unittest.TestCase):
+    def test_panel_click_selects_only_the_armed_field_and_checks_geometry_for_every_selector(self):
+        from qgis.core import QgsLayerTreeModel, QgsRasterLayer, QgsVectorLayer
+        from qgis.gui import QgsLayerTreeView, QgsMapLayerComboBox
+        from qgis.PyQt.QtTest import QTest
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        window, tree = QMainWindow(), QgsLayerTreeView()
+        tree_model = QgsLayerTreeModel(QgsProject.instance().layerTreeRoot(), tree)
+        tree.setModel(tree_model)
+        window.setCentralWidget(tree)
+        layers = [QgsVectorLayer(kind + '?crs=EPSG:2180', kind, 'memory') for kind in ('Point', 'LineString', 'Polygon')]
+        layers.append(QgsRasterLayer(str(self.root/'NMPT'/'elevation.tif'), 'Zdjęcie kontrolne'))
+        QgsProject.instance().addMapLayers(layers)
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return layers[0]
+            def layerTreeView(self): return tree
+
+        view = WorkspaceDialog(Iface())
+        try:
+            window.show()
+            view.show()
+            QgsApplication.processEvents()
+            picker = view.layer_panel_picker
+            self.assertEqual(set(picker.buttons), set(view.findChildren(QgsMapLayerComboBox)))
+            self.assertEqual(len(picker.buttons), 8)
+            self.assertTrue(view.detail_box.isCollapsed())
+            self.assertTrue(view.visual_body.isHidden())
+            self.assertFalse(view.details.isChecked())
+            self.assertFalse(view.export_after.isChecked())
+            view.detail_box.setCollapsed(False)
+            view.context_box.setCollapsed(False)
+            self.assertFalse(view.visual_body.isHidden())
+            before = {combo: combo.currentLayer() for combo in picker.buttons}
+            picker.begin(view.context_layers['drogi'])
+            self.assertFalse(picker.choose(layers[0]))
+            self.assertEqual(before, {combo: combo.currentLayer() for combo in picker.buttons})
+            picker.finish()
+            # A real layer-tree click, including a layer which is already active.
+            for combo in picker.buttons:
+                candidate = next(combo.layer(i) for i in range(combo.count()) if combo.layer(i) is not None)
+                before = {other: other.currentLayer() for other in picker.buttons if other is not combo}
+                picker.buttons[combo].click()
+                self.assertFalse(view.isVisible())
+                node = QgsProject.instance().layerTreeRoot().findLayer(candidate.id())
+                index = tree.node2index(node)
+                tree.scrollTo(index)
+                QgsApplication.processEvents()
+                QTest.mouseClick(tree.viewport(), Qt.LeftButton, pos=tree.visualRect(index).center())
+                self.assertIsNone(picker.target)
+                self.assertIs(combo.currentLayer(), candidate)
+                self.assertEqual(before, {other: other.currentLayer() for other in before})
+            previous = view.layer.currentLayer()
+            picker.begin(view.layer)
+            picker.notice.reject()
+            self.assertIs(view.layer.currentLayer(), previous)
+            self.assertTrue(view.isVisible())
+        finally:
+            view.layer_panel_picker.finish(restore=False)
+            view.deleteLater()
+            window.hide()
+
+    def test_modal_visual_settings_release_the_layer_tree_during_picking(self):
+        from qgis.PyQt.QtCore import QTimer
+        from qgis.PyQt.QtWidgets import QApplication
+        from qgis.core import QgsLayerTreeModel, QgsVectorLayer
+        from qgis.gui import QgsLayerTreeView
+        from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
+        window, tree = QMainWindow(), QgsLayerTreeView()
+        tree_model = QgsLayerTreeModel(QgsProject.instance().layerTreeRoot(), tree)
+        tree.setModel(tree_model)
+        window.setCentralWidget(tree)
+        points = QgsVectorLayer('Point?crs=EPSG:2180', 'drzewa', 'memory')
+        QgsProject.instance().addMapLayer(points)
+
+        class Iface:
+            def mainWindow(self): return window
+            def activeLayer(self): return points
+            def layerTreeView(self): return tree
+
+        view = WorkspaceDialog(Iface())
+        results = []
+
+        def pick():
+            try:
+                view.layer_panel_picker.begin(view.scene_layers['drzewa'])
+                results.append(QApplication.activeModalWidget() is None)
+                results.append(view.layer_panel_picker.choose(points))
+            finally:
+                view.visual_settings.accept()
+        try:
+            QTimer.singleShot(0, pick)
+            view.visual_settings.exec()
+            self.assertEqual(results, [True, True])
+            self.assertIs(view.scene_layers['drzewa'].currentLayer(), points)
+        finally:
+            view.layer_panel_picker.finish(restore=False)
+            view.deleteLater()
+
+    def test_result_name_records_source_and_exact_warsaw_time_without_replacing_missing_history(self):
+        from nmt_nmpt_downloader.analysis_identity import initialize_identity, result_title
+        report = dict(options=dict(turbine_layer_name='Park <Północ>'), started_at='2026-10-26T08:07:06+00:00')
+        initialize_identity(report)
+        title = result_title(report)
+        self.assertEqual(title, 'Widoczność · Park <Północ> · 2026-10-26 09:07:06 CET')
+        created = report['created_at']
+        initialize_identity(report)
+        self.assertEqual(report['created_at'], created)
+        self.assertIn('14:07:06 CEST', result_title(dict(report, created_at='2026-06-20T12:07:06+00:00')))
+        self.assertIn('data niezapisana', result_title({}))
+
     def test_street_reference_positions_the_imported_image_and_selects_the_photo_output(self):
         from nmt_nmpt_downloader.workspace_dialog import WorkspaceDialog
         from nmt_nmpt_downloader.street_reference import street_reference

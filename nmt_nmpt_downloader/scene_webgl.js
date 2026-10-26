@@ -124,7 +124,7 @@ void main(){
 `;
 function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
   const $=id=>document.getElementById(id),canvas=$('view'),gl=canvas.getContext('webgl',{antialias:true,preserveDrawingBuffer:true,alpha:false});
-  $('title').textContent=`${s.resource} · turbina ${s.turbine} · szczegółowa scena 3D`;
+  $('title').textContent=(s.analysis_title?s.analysis_title+' · ':'')+`${s.resource} · turbina ${s.turbine} · model 3D`;
   $('info').textContent=`${s.demo?'DANE SYNTETYCZNE · ':''}Wersja ${s.version||'2.x'} · promień sceny ${s.radius} m · siatka ${s.x.length}×${s.y.length} · krok 3D ${s.step_m} m · krok analizy ${s.analysis_step_m} m · profil ${s.profile_radius||s.radius} m`;
   $('profile').href=`profil_${s.resource}.svg`;$('fallback').href=`scena_3d_lekka_${s.resource}.html`;
   $('bearing').value=s.azimuth;$('cover').checked=s.resource==='NMPT';$('cover').disabled=s.resource!=='NMPT';
@@ -148,7 +148,7 @@ function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
   $('forest-objects').checked=!!forestAvailable;$('forest-objects').disabled=!forestAvailable;
   function photoState(){
     const expected=imageBlocks.filter(block=>block.view_index==null||block.view_index===activeView).length;
-    $('texture-status').textContent=textureReady?`Zdjęcie: ${$('photo').checked?'rysowanie na modelu WŁĄCZONE':'WYŁĄCZONE NA MODELU — kliknij Pokaż ortofotomapę'}. Podgląd ${textureSize}; aktywne kafle ${detailedTextures.size}/${expected}. ${tileErrors.length+exportIssues.length?'Błędy kafli: '+(tileErrors.length+exportIssues.length)+'. ':''}Sprawdź „Zdjęcie z góry”.`:(textureUrl?'Wczytywanie ortofotomapy…':'Brak osadzonej ortofotomapy. W QGIS wybierz jej źródło i kliknij Odśwież samą scenę 3D.');
+    $('texture-status').textContent=textureReady?`Zdjęcie: ${$('photo').checked?'rysowanie na modelu WŁĄCZONE':'WYŁĄCZONE NA MODELU — włącz Ortofotomapę w menu Wizualizacja'}. Podgląd ${textureSize}; aktywne kafle ${detailedTextures.size}/${expected}. ${tileErrors.length+exportIssues.length?'Błędy kafli: '+(tileErrors.length+exportIssues.length)+'. ':''}`:(textureUrl?'Wczytywanie ortofotomapy…':'Brak osadzonej ortofotomapy. W QGIS wybierz jej źródło i utwórz model w sekcji Wizualizacja.');
   }
   photoState();
   function putTexture(handle,image){
@@ -178,9 +178,9 @@ function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
       if(gl.isContextLost&&gl.isContextLost())throw Error('utracono kontekst graficzny');
       const width=image.naturalWidth||image.width,height=image.naturalHeight||image.height;
       putTexture(texture,image);
-      textureReady=true;textureSize=`${width||'?'} × ${height||'?'}`;$('photo').disabled=false;$('show-photo').disabled=false;$('photo').checked=true;
+      textureReady=true;textureSize=`${width||'?'} × ${height||'?'}`;$('photo').disabled=false;$('photo').checked=true;
       photoState();schedule();
-    }catch(error){textureReady=false;$('photo').disabled=true;$('show-photo').disabled=true;$('texture-status').textContent='Zdjęcie jest w HTML i na mapce, ale nie udało się nałożyć go w 3D: '+error.message+'. Możesz pobrać PNG przyciskiem powyżej.';schedule()}
+    }catch(error){textureReady=false;$('photo').disabled=true;$('texture-status').textContent='Zdjęcie jest w HTML i na mapce, ale nie udało się nałożyć go w 3D: '+error.message+'. Sprawdź źródło ortofotomapy w QGIS.';schedule()}
   };image.onerror=()=>{$('texture-status').textContent='Nie można odczytać osadzonej ortofotomapy. Odśwież scenę w QGIS i sprawdź źródło.'};image.src=textureUrl}
   let textureGeneration=0,imageQueue=[];
   function queueTextures(){
@@ -229,13 +229,15 @@ function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
   }
   for(let index=0;index<(s.detail_views||[]).length;index++){const view=s.detail_views[index],option=document.createElement('option');option.value=index;option.textContent=view.name+(view.error?' · '+view.error:'');option.disabled=!!view.error;$('viewpoint').appendChild(option)}
   $('viewpoint').value=activeView;
+  $('viewpoint').disabled=!(s.detail_views||[]).some(view=>!view.error);
+  $('surface-mode').disabled=s.resource!=='NMPT';
   $('viewpoint').addEventListener('change',()=>{const index=+$('viewpoint').value;if(index<0)return;activeView=index;const view=s.detail_views[index];$('eye-height').value=view.eye;if(setObserver(view.point)){$('camera').value='eye';cameraMode();dirty=true;queueTextures();schedule()}});
   function cameraMode(){
-    const eye=$('camera').value==='eye';$('vertical').disabled=eye;$('projection').disabled=eye;
+    const eye=$('camera').value==='eye';$('vertical').disabled=eye;$('projection').disabled=eye;$('eye-height').disabled=!eye;
     $('bearing-label').textContent=eye?'Kierunek patrzenia':'Strona';$('tilt').min=eye?-89:8;$('tilt').max=eye?89:80;
     if(eye){$('vertical').value=1;$('projection').value='perspective';$('lines').checked=false;
       if(!(observerPoint?setObserver(observerPoint):defaultObserver())){$('camera').value='orbit';cameraMode();return}}
-    else{$('bearing').value=s.azimuth;$('tilt').value=28}
+    else{$('bearing').value=s.azimuth;$('tilt').value=$('camera').value==='top'?80:28}
     schedule();
   }
   locator.addEventListener('pointerdown',event=>{const rect=locator.getBoundingClientRect(),b=s.texture_bounds||[s.x[0],s.y[s.y.length-1],s.x[s.x.length-1],s.y[0]];
@@ -341,10 +343,8 @@ function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
     if($('lines').checked){gl.disable(gl.DEPTH_TEST);for(const b of rays)bind(b);gl.enable(gl.DEPTH_TEST)}drawLocator();
   }catch(error){$('status').textContent='Problem renderowania: '+error.message+'. Użyj lekkiego podglądu.'}}
   function schedule(){if(!pending){pending=true;requestAnimationFrame(draw)}}
-  $('photo').addEventListener('input',()=>{photoState();schedule()});$('show-photo').onclick=()=>{$('photo').checked=true;photoState();schedule()};
-  $('object-view').disabled=!(s.trees||[]).length&&!(s.buildings||[]).length;
-  $('object-view').onclick=()=>{$('cover').checked=false;$('trees').checked=true;$('buildings').checked=true;$('forest-objects').checked=!!forestAvailable;dirty=true;schedule()};
-  $('photo-top').onclick=()=>{$('camera').value='orbit';cameraMode();$('tilt').value=80;$('fov').value=45;zoom=1;schedule()};
+  $('photo').addEventListener('input',()=>{photoState();schedule()});
+  $('surface-mode').addEventListener('input',()=>{const mode=$('surface-mode').value;$('cover').checked=mode!=='objects';$('trees').checked=mode!=='surface';$('buildings').checked=mode!=='surface';$('forest-objects').checked=mode!=='surface'&&!!forestAvailable;dirty=true;schedule()});
   canvas.sceneDiagnostics=()=>({version:s.version,resource:s.resource,preview_loaded:textureReady,
     photo_enabled:$('photo').checked,tiles_expected:imageBlocks.filter(block=>block.view_index==null||block.view_index===activeView).length,tiles_loaded:detailedTextures.size,
     export_tiles_expected:(s.texture_grid||[]).length+(s.detail_views||[]).reduce((n,v)=>n+(v.patch?.texture_grid||[]).length,0)||imageBlocks.length,export_errors:exportIssues,
@@ -354,7 +354,6 @@ function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
     camera:$('camera').value,active_view:activeView,viewpoints:(s.detail_views||[]).map(view=>({name:view.name,error:view.error||null,step_m:view.patch?.step_m})),
     texture_status:$('texture-status').textContent,render_status:$('status').textContent,
     gl_error:gl.getError()});
-  $('diagnostics').onclick=()=>{const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify(canvas.sceneDiagnostics(),null,2)],{type:'application/json'}));a.href=url;a.download='diagnostyka_widoku_3d.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
   for(const id of ['bearing','tilt','vertical','sun','projection','fov','material','cover','trees','buildings','lines','forest-objects','photo-shade'])$(id).addEventListener('input',()=>{if(['material','cover','trees','buildings','forest-objects'].includes(id))dirty=true;schedule()});
   $('reset').onclick=()=>{$('camera').value='orbit';cameraMode();$('bearing').value=s.azimuth;$('tilt').value=28;$('vertical').value=1;$('fov').value=45;$('projection').value='perspective';zoom=1;schedule()};
   $('save').onclick=()=>{draw();const a=document.createElement('a');a.download=`scena_3d_${s.resource}.png`;a.href=canvas.toDataURL('image/png');a.click()};
@@ -366,4 +365,4 @@ function startScene(s,textureUrl,imageBlocks=[],exportIssues=[]) {
   if(s.start_eye){$('camera').value='eye';cameraMode()}schedule();
 }
 if(typeof module!=='undefined'&&module.exports)module.exports={heightColor,multiply,lookAt,projection,terrainTile,vertexShader,fragmentShader,surfaceAt,eyePose,displaySurface,shadowAllowed};
-if(typeof document!=='undefined'&&(typeof preferThree==='undefined'||!preferThree)){try{startScene(scene,textureData,typeof textureTiles==='undefined'?[]:textureTiles,typeof textureTileIssues==='undefined'?[]:textureTileIssues)}catch(error){document.getElementById('status').textContent='Nie udało się otworzyć WebGL: '+error.message+'. Użyj lekkiego podglądu.'}}
+if(typeof document!=='undefined'){try{startScene(scene,textureData,typeof textureTiles==='undefined'?[]:textureTiles,typeof textureTileIssues==='undefined'?[]:textureTileIssues)}catch(error){document.getElementById('status').textContent='Nie udało się otworzyć WebGL: '+error.message+'. Użyj lekkiego podglądu.'}}

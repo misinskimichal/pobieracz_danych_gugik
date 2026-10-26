@@ -1,58 +1,32 @@
 <!doctype html><html lang="pl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Scena 3D — atlas widoczności</title>
-<style>*{box-sizing:border-box}body{margin:0;background:#102b38;color:#e9f3f5;font:15px system-ui,sans-serif}header{padding:20px 28px;background:#153747}h1{font-size:25px;margin:0 0 8px}p{margin:5px 0;color:#b6d1da;line-height:1.5}.controls{display:flex;gap:14px 22px;flex-wrap:wrap;padding:15px 28px;align-items:center}label{display:flex;gap:8px;align-items:center}input[type=range]{width:105px;accent-color:#6dd6ad}a,button,select{color:#153747;background:#8de1ca;border:0;border-radius:6px;padding:8px 12px;text-decoration:none;cursor:pointer}canvas{display:block;width:100%;height:65vh;min-height:360px;touch-action:none;background:#dce9e9}aside{padding:16px 28px;line-height:1.65;color:#bfd6dd}.key{display:inline-block;width:160px;height:12px;background:linear-gradient(90deg,#21865a,#e4d45e,#d34747);margin:0 12px;vertical-align:middle}output{min-width:30px}#status{padding:8px 28px;color:#94ddcd}@media print{.controls{display:none}body,header{background:white;color:#153747}p,aside{color:#153747}canvas{height:65vh}}
-header{padding:12px 20px}header h1{font-size:23px;margin:0 0 6px}header p{margin:4px 0}header p:last-child{display:none}
-.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 20px;background:#1d4656}.toolbar label{display:flex;align-items:center;gap:7px}
-.settings{padding:8px 20px;background:#173b49}.settings summary{cursor:pointer;color:#a0dfcd}.settings p{color:#c6dbdf;line-height:1.5}
-.viewer{position:relative}#view{display:block;width:100%;height:calc(100vh - 230px);min-height:450px;margin:0;border-radius:0}
-.map{position:absolute;left:15px;top:15px;width:150px;padding:5px;background:#173b49cc;border-radius:8px;font-size:11px}.map #locator{width:140px;height:140px;min-height:0;cursor:crosshair}.map span{color:white;display:block}
-#eye-status{position:absolute;bottom:8px;left:20px;color:white;background:#173b49bd;padding:8px;font-size:12px;pointer-events:none}
-#texture-status,#status{padding:5px 20px;color:#b9dcd9;font-size:13px}button,select{cursor:pointer}
+<title>Widoczność · model 3D</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#153747;color:#edf5f6;font:15px system-ui,sans-serif}header{padding:12px 20px}h1{font-size:21px;margin:0 0 4px}p{margin:5px 0;line-height:1.5}#info,#texture-status,#status{font-size:12px;color:#bed8dc}details{padding:10px 20px;background:#1d4657}summary{cursor:pointer;color:#9ee1d1;font-weight:600}.controls{display:flex;flex-wrap:wrap;gap:14px 22px;padding:14px 0;align-items:center}label{display:flex;align-items:center;gap:8px}input[type=range]{width:115px}input[type=number]{width:65px}button,select,a{font:inherit;background:#a0dfcd;color:#133c49;border:0;border-radius:5px;padding:7px 10px;text-decoration:none}button,select{cursor:pointer}button:disabled{opacity:.5;cursor:default}output{min-width:33px}.viewer{position:relative}#view{display:block;width:100%;height:calc(100vh - 160px);min-height:400px;touch-action:none;background:#dce9e9}.map{position:absolute;top:12px;left:12px;padding:5px;background:#153747d9;border-radius:5px;font-size:11px}#locator{width:130px;height:130px;display:block;cursor:crosshair}#eye-status{position:absolute;bottom:8px;left:16px;background:#153747d9;padding:6px;max-width:90%;font-size:12px;pointer-events:none}#texture-status,#status{padding:3px 20px}#context-status{font-size:12px;max-width:1000px}#low,#high{font-size:12px}[hidden]{display:none!important}
 </style>
-<header><h1 id="title">Scena 3D</h1><p id="info"></p><p>Wybierz przygotowane miejsce z listy. Przeciąganie rozgląda się, kółko zmienia kąt widzenia. Detal obejmuje otoczenie aktywnego punktu.</p></header>
-<div class="toolbar">
-<label>Widok <select id="camera"><option value="orbit">Model z góry / obrót</option><option value="eye">Z poziomu oczu</option></select></label>
-<label>Miejsce <select id="viewpoint"><option value="-1">Kliknij na mapce</option></select></label>
-<button id="look-turbine">Patrz na turbinę</button>
+<header><h1 id="title">Widoczność · model 3D</h1><p id="info"></p></header>
+<details id="visualization"><summary>Wizualizacja</summary><div class="controls">
+<label>Widok <select id="camera" title="Z oczu: rozglądanie z miejsca na mapce. Model: obrót całego terenu."><option value="orbit">Model — obrót</option><option value="top">Model — z góry</option><option value="eye">Z poziomu oczu</option></select></label>
+<label>Miejsce <select id="viewpoint"><option value="-1">Wskaż na mapce</option></select></label>
+<label><span id="bearing-label">Kierunek</span> <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
+<label>Góra / dół <input id="tilt" type="range" min="8" max="80" value="28"><output id="tval"></output></label>
 <label>Kąt widzenia <input id="fov" type="range" min="15" max="90" value="45"><output id="fval"></output></label>
-<button id="save">Zapisz PNG</button>
-</div>
-<details class="settings"><summary>Ustawienia zaawansowane i informacje o danych</summary><div class="controls">
-<label><span id="bearing-label">Strona</span> <input id="bearing" type="range" min="0" max="360" value="225"><output id="bval"></output></label>
-<label>Nachylenie <input id="tilt" type="range" min="8" max="80" value="28"><output id="tval"></output></label>
-<label>Pion × <input id="vertical" type="range" min="1" max="5" step=".25" value="1"><output id="vval"></output></label>
-<label>Oświetlenie <input id="sun" type="range" min="0" max="360" value="300"></label>
-<label>Rzut <select id="projection"><option value="perspective">Perspektywiczny</option><option value="ortho">Równoległy</option></select></label>
-<label><input id="photo" type="checkbox" disabled>Ortofotomapa na modelu</label>
-<button id="show-photo" disabled>Pokaż ortofotomapę</button>
-<button id="photo-top">Zdjęcie z góry</button>
-<label><input id="photo-shade" type="checkbox">Cieniuj zdjęcie</label>
-<button id="diagnostics">Zapisz diagnostykę widoku</button>
-<label>Kolory pod zdjęciem <select id="material"><option value="height">Wysokość</option><option value="cover">Pokrycie / BDOT</option></select></label>
-<label><input id="cover" type="checkbox" checked>Powierzchnia NMPT</label>
-<label><input id="trees" type="checkbox" checked>Symbole drzew</label>
-<label><input id="forest-objects" type="checkbox">Pokaż korony zamiast powierzchni lasu</label>
-<label><input id="buildings" type="checkbox" checked>Bryły budynków</label>
-<button id="object-view" disabled title="Podgląd uproszczonych obiektów na gruncie; nie przelicza widoczności">NMT + obiekty BDOT</button>
-<label><input id="lines" type="checkbox" checked>Linie przekroju</label>
-<label>Oko nad NMT <input id="eye-height" type="number" min="0.3" max="100" step="0.1" value="1.7" style="width:75px"> m</label>
-<button id="reset">Przywróć kamerę</button><button id="save">Zapisz PNG</button><a id="profile">Przekrój</a><a id="fallback">Lekki podgląd bez WebGL</a>
-<a id="download-texture" style="display:none">Pobierz zdjęcie podkładu PNG</a>
-</div><p id="context-status"></p><p>Korony i bryły korzystają z warstw projektu i wysokości NMT/NMPT. Elewacje i listowie są poglądowe. Ortofotomapa przedstawia dachy i powierzchnie z góry. Zdjęcie terenowe wybierz w QGIS jako osobny rodzaj wizualizacji.</p>
-<p><span id="low"></span> — <span id="high"></span></p></details>
+<label>Oko nad gruntem <input id="eye-height" type="number" min="0.3" max="100" step="0.1" value="1.7"> m</label>
+<label>Pokrycie <select id="surface-mode" title="Obiekty są ilustracyjne; wyników widoczności nie zmienia sposób rysowania."><option value="combined">NMPT + budynki i korony</option><option value="surface">Sama powierzchnia NMPT</option><option value="objects">NMT + obiekty z warstw</option></select></label>
+<label title="Zdjęcie lotnicze na powierzchni modelu i dachach"><input id="photo" type="checkbox" disabled>Ortofotomapa</label>
+<label><input id="lines" type="checkbox">Linie przekroju</label>
+</div><div class="controls"><button id="look-turbine" title="Obróć aparat w stronę turbiny z aktualnego miejsca">Patrz na turbinę</button><button id="reset">Przywróć kamerę</button><button id="save">Zapisz PNG</button><a id="profile">Przekrój 2D</a><a id="fallback">Podgląd bez WebGL</a></div>
+<p>Przeciągaj widok, aby się rozejrzeć. Kółko zmienia kąt widzenia z oczu. Po kliknięciu sceny strzałki / WASD przesuwają aparat. Miejsce wybierzesz też na mapce.</p>
+<p id="context-status"></p><p><span id="low"></span> — <span id="high"></span></p>
+</details>
+<div hidden><input id="vertical" value="1"><output id="vval"></output><input id="sun" value="300"><select id="projection"><option value="perspective">Perspektywa</option></select><select id="material"><option value="height">Wysokość</option></select><input id="cover" type="checkbox" checked><input id="trees" type="checkbox" checked><input id="forest-objects" type="checkbox"><input id="buildings" type="checkbox" checked><input id="photo-shade" type="checkbox"><a id="download-texture"></a></div>
 <div id="texture-status" role="status"></div><div id="status" role="status">Przygotowanie modelu…</div>
-<div class="viewer"><canvas id="view" tabindex="0" aria-label="Model 3D terenu, zabudowy i roślinności"></canvas>
-<div class="map"><canvas id="locator" width="320" height="320" aria-label="Kliknij miejsce patrzenia"></canvas><span>Kliknij miejsce patrzenia</span></div>
-<p id="eye-status">Przeciągnij widok, aby się rozejrzeć. Strzałki / WASD przesuwają aparat.</p></div>
+<div class="viewer"><canvas id="view" tabindex="0" aria-label="Model 3D terenu, zabudowy i roślinności"></canvas><div class="map"><canvas id="locator" width="320" height="320" aria-label="Kliknij miejsce patrzenia"></canvas>Kliknij miejsce patrzenia</div><p id="eye-status"></p></div>
 <script>
 'use strict';
-const preferThree=true;
 const scene=/*SCENE_DATA*/;
 const textureData=/*SCENE_TEXTURE*/null;
 const textureTiles=/*SCENE_TEXTURE_TILES*/[];
 const textureTileIssues=/*SCENE_TEXTURE_ISSUES*/[];
 /*SCENE_APPEARANCE*/
 /*SCENE_RENDERER*/
-/*THREE_RUNTIME*/
-/*THREE_RENDERER*/
 </script></html>

@@ -270,13 +270,12 @@ def write_details(folder, spec, grid, turbine, ground, ground_valid, surface, su
     if reused:
         context_summary = payload['context_summary']
     scene = folder / ('scena_3d_' + spec['resource'] + '.html')
+    if options.get('analysis_created_at'):
+        from .analysis_identity import result_title
+        payload['analysis_title'] = result_title(dict(options=options, created_at=options['analysis_created_at']))
     template = Path(__file__).with_name('scene3d.html').read_text(encoding='utf-8')
     template = template.replace('/*SCENE_RENDERER*/', Path(__file__).with_name('scene_webgl.js').read_text(encoding='utf-8'))
     template = template.replace('/*SCENE_APPEARANCE*/', Path(__file__).with_name('scene_appearance.js').read_text(encoding='utf-8'))
-    license_text = Path(__file__).with_name('THREE_LICENSE.txt').read_text(encoding='utf-8')
-    runtime = '/* Three.js licence\n'+license_text+'\n*/\n'+Path(__file__).with_name('three_runtime.js').read_text(encoding='utf-8')
-    template = template.replace('/*THREE_RUNTIME*/', runtime)
-    template = template.replace('/*THREE_RENDERER*/', Path(__file__).with_name('scene_three.js').read_text(encoding='utf-8'))
     # Avoid closing an inline script if a user-supplied source ID contains HTML.
     serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')
     scene.write_text(template.replace('/*SCENE_DATA*/', serialized), encoding='utf-8')

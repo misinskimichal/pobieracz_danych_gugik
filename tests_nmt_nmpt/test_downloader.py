@@ -973,6 +973,7 @@ class AtlasTests(unittest.TestCase):
             dialog.report_folder.edit.setText(self.config['report_folder'])
             dialog.auto_download.setChecked(False)
             dialog.scene_texture.setChecked(False)
+            dialog.export_after.setChecked(True)
             with patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.information'), patch('nmt_nmpt_downloader.workspace_dialog.QMessageBox.warning'):
                 dialog.start()
                 DownloaderTests.wait_until(self, lambda: dialog.task is None and dialog.export_job is None and dialog.last_report is not None, 15000)
@@ -980,6 +981,11 @@ class AtlasTests(unittest.TestCase):
             self.assertNotIn('presentation_error', dialog.last_report)
             self.assertTrue(Path(dialog.last_report['presentation']['pdf']).is_file())
             self.assertIn('NMPT/count', dialog.atlas_layers)
+            from nmt_nmpt_downloader.analysis_identity import result_title
+            self.assertEqual(dialog.last_report['turbine_layer_name'], self.layer.name())
+            title = result_title(dialog.last_report)
+            self.assertRegex(title, r'^Widoczność · turbiny · \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} CE(S)?T$')
+            self.assertIsNotNone(QgsProject.instance().layerTreeRoot().findGroup(title))
         finally:
             dialog.deleteLater()
             canvas.deleteLater()
